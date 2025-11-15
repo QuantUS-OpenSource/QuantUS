@@ -1,0 +1,6 @@
+[submodule "engines/ceus"]
+	path = engines/ceus
+	url = https://github.com/QuantUS-OpenSource/QuantUS-Backend-CEUS
+[submodule "engines/qus"]
+	path = engines/qus
+	url = https://github.com/QuantUS-OpenSource/QuantUS-Backend-QUS

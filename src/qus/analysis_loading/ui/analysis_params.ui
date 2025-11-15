@@ -1,0 +1,688 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>analysisParams</class>
+ <widget class="QWidget" name="analysisParams">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1284</width>
+    <height>803</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>0</width>
+    <height>0</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Analysis Parameters Configuration</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">QWidget {
+	background: rgb(42, 42, 42);
+}</string>
+  </property>
+  <widget class="QWidget" name="horizontalLayoutWidget_4">
+   <property name="geometry">
+    <rect>
+     <x>60</x>
+     <y>20</y>
+     <width>951</width>
+     <height>731</height>
+    </rect>
+   </property>
+   <layout class="QHBoxLayout" name="full_screen_layout" stretch="0,0">
+    <item>
+     <layout class="QVBoxLayout" name="side_bar_layout" stretch="0,0">
+      <property name="spacing">
+       <number>0</number>
+      </property>
+      <property name="sizeConstraint">
+       <enum>QLayout::SetMaximumSize</enum>
+      </property>
+      <item>
+       <widget class="QWidget" name="sidebar" native="true">
+        <property name="minimumSize">
+         <size>
+          <width>341</width>
+          <height>601</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>241</width>
+          <height>601</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QWidget {
+	background-color: rgb(28, 0, 101);
+}</string>
+        </property>
+        <widget class="QFrame" name="imageSelectionSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color: rgb(99, 0, 174);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="imageSelectionLabelSidebar">
+          <property name="geometry">
+           <rect>
+            <x>70</x>
+            <y>0</y>
+            <width>191</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Image Selection:</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+         <widget class="QLabel" name="imageLabel">
+          <property name="geometry">
+           <rect>
+            <x>-60</x>
+            <y>40</y>
+            <width>191</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 16px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Image:</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+         <widget class="QLabel" name="phantomLabel">
+          <property name="geometry">
+           <rect>
+            <x>-50</x>
+            <y>70</y>
+            <width>191</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 16px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold
+}</string>
+          </property>
+          <property name="text">
+           <string>Phantom:</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+         <widget class="QLabel" name="image_path_input">
+          <property name="geometry">
+           <rect>
+            <x>100</x>
+            <y>40</y>
+            <width>241</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 14px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+}</string>
+          </property>
+          <property name="text">
+           <string>Sample filename </string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+         <widget class="QLabel" name="phantom_path_input">
+          <property name="geometry">
+           <rect>
+            <x>100</x>
+            <y>70</y>
+            <width>241</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 14px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+}</string>
+          </property>
+          <property name="text">
+           <string>Sample filename </string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </widget>
+        <widget class="QFrame" name="segmentationSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>120</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color: rgb(99, 0, 174);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="segmentationSidebarLabel">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>40</y>
+            <width>341</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Segmentation Selection</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </widget>
+        <widget class="QFrame" name="analysisParamsSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>240</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color: rgb(99, 0, 174);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="analysisParamsLabel">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>30</y>
+            <width>341</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight:bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Analysis Parameter Selection</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </widget>
+        <widget class="QFrame" name="rfAnalysisSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>360</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color: rgb(99, 0, 174);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="rfAnalysisLabel">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>30</y>
+            <width>341</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Radio Frequency Data Analysis</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </widget>
+        <widget class="QFrame" name="exportResultsSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>480</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color:  rgb(49, 0, 124);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="exportResultsLabel">
+          <property name="geometry">
+           <rect>
+            <x>20</x>
+            <y>30</y>
+            <width>301</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Visualization / Export</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </widget>
+       </widget>
+      </item>
+      <item>
+       <widget class="QFrame" name="gridFrame">
+        <property name="maximumSize">
+         <size>
+          <width>341</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QFrame {
+	background-color: rgb(28, 0, 101);
+}</string>
+        </property>
+        <layout class="QGridLayout" name="backButtonGrid" rowstretch="0,0">
+         <property name="sizeConstraint">
+          <enum>QLayout::SetMinAndMaxSize</enum>
+         </property>
+         <property name="leftMargin">
+          <number>10</number>
+         </property>
+         <property name="topMargin">
+          <number>10</number>
+         </property>
+         <property name="rightMargin">
+          <number>10</number>
+         </property>
+         <property name="bottomMargin">
+          <number>10</number>
+         </property>
+         <item row="0" column="0">
+          <spacer name="verticalSpacer">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item row="1" column="1">
+          <spacer name="horizontalSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item row="1" column="0">
+          <widget class="QPushButton" name="back_button">
+           <property name="minimumSize">
+            <size>
+             <width>131</width>
+             <height>41</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>131</width>
+             <height>41</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+           </property>
+           <property name="text">
+            <string>Back</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <layout class="QVBoxLayout" name="analysis_params_layout" stretch="1,1,10,0,1,1">
+      <property name="spacing">
+       <number>50</number>
+      </property>
+      <property name="leftMargin">
+       <number>30</number>
+      </property>
+      <property name="topMargin">
+       <number>10</number>
+      </property>
+      <property name="rightMargin">
+       <number>30</number>
+      </property>
+      <property name="bottomMargin">
+       <number>10</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="analysis_execution_label">
+        <property name="styleSheet">
+         <string notr="true">QLabel {
+	font-size: 29px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+}</string>
+        </property>
+        <property name="text">
+         <string>Analysis in Progress...</string>
+        </property>
+        <property name="textFormat">
+         <enum>Qt::AutoText</enum>
+        </property>
+        <property name="scaledContents">
+         <bool>false</bool>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="analysis_params_label">
+        <property name="styleSheet">
+         <string notr="true">QLabel {
+	font-size: 29px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+}</string>
+        </property>
+        <property name="text">
+         <string>Configure Analysis Parameters:</string>
+        </property>
+        <property name="textFormat">
+         <enum>Qt::AutoText</enum>
+        </property>
+        <property name="scaledContents">
+         <bool>false</bool>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QScrollArea" name="params_scroll_area">
+        <property name="widgetResizable">
+         <bool>true</bool>
+        </property>
+        <widget class="QWidget" name="params_content">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>409</width>
+           <height>295</height>
+          </rect>
+         </property>
+         <layout class="QVBoxLayout" name="params_layout"/>
+        </widget>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="analysis_running_label">
+        <property name="styleSheet">
+         <string notr="true">QLabel {
+	color: rgb(0, 255, 0);
+	font-size: 20px;
+	background-color: rgba(255, 255, 255, 0);
+}</string>
+        </property>
+        <property name="text">
+         <string>Running Analysis....</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item alignment="Qt::AlignHCenter|Qt::AlignVCenter">
+       <widget class="QPushButton" name="run_analysis_button">
+        <property name="minimumSize">
+         <size>
+          <width>131</width>
+          <height>41</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>131</width>
+          <height>41</height>
+         </size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+        </property>
+        <property name="text">
+         <string>Run Analysis</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="verticalSpacer_10">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>20</width>
+          <height>40</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

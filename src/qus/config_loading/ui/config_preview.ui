@@ -1,0 +1,1343 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>configPreview</class>
+ <widget class="QWidget" name="configPreview">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1284</width>
+    <height>803</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>0</width>
+    <height>0</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Configuration Preview</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">QWidget {
+	background: rgb(42, 42, 42);
+}</string>
+  </property>
+  <widget class="QWidget" name="horizontalLayoutWidget_4">
+   <property name="geometry">
+    <rect>
+     <x>60</x>
+     <y>20</y>
+     <width>1162</width>
+     <height>735</height>
+    </rect>
+   </property>
+   <layout class="QHBoxLayout" name="full_screen_layout" stretch="0,0">
+    <item>
+     <layout class="QVBoxLayout" name="side_bar_layout" stretch="0,0">
+      <property name="spacing">
+       <number>0</number>
+      </property>
+      <property name="sizeConstraint">
+       <enum>QLayout::SetMaximumSize</enum>
+      </property>
+      <item>
+       <widget class="QWidget" name="sidebar" native="true">
+        <property name="minimumSize">
+         <size>
+          <width>341</width>
+          <height>601</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>241</width>
+          <height>601</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QWidget {
+	background-color: rgb(28, 0, 101);
+}</string>
+        </property>
+        <widget class="QFrame" name="imageSelectionSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color: rgb(99, 0, 174);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="imageSelectionLabelSidebar">
+          <property name="geometry">
+           <rect>
+            <x>70</x>
+            <y>0</y>
+            <width>191</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Image Selection:</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+         <widget class="QLabel" name="imageLabel">
+          <property name="geometry">
+           <rect>
+            <x>-60</x>
+            <y>40</y>
+            <width>191</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 16px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Image:</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+         <widget class="QLabel" name="phantomLabel">
+          <property name="geometry">
+           <rect>
+            <x>-50</x>
+            <y>70</y>
+            <width>191</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 16px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold
+}</string>
+          </property>
+          <property name="text">
+           <string>Phantom:</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+         <widget class="QLabel" name="image_path_input">
+          <property name="geometry">
+           <rect>
+            <x>90</x>
+            <y>40</y>
+            <width>241</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 14px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+}</string>
+          </property>
+          <property name="text">
+           <string>Sample filename </string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+         <widget class="QLabel" name="phantom_path_input">
+          <property name="geometry">
+           <rect>
+            <x>90</x>
+            <y>70</y>
+            <width>241</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 14px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+}</string>
+          </property>
+          <property name="text">
+           <string>Sample filename </string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </widget>
+        <widget class="QFrame" name="segmentationSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>120</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color: rgb(99, 0, 174);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="segmentationSidebarLabel">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>40</y>
+            <width>341</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Segmentation Selection</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </widget>
+        <widget class="QFrame" name="analysisParamsSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>240</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color: rgb(99, 0, 174);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="analysisParamsLabel">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>30</y>
+            <width>341</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight:bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Analysis Parameter Selection</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </widget>
+        <widget class="QFrame" name="rfAnalysisSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>360</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color:  rgb(49, 0, 124);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="rfAnalysisLabel">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>30</y>
+            <width>341</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Radio Frequency Data Analysis</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </widget>
+        <widget class="QFrame" name="exportResultsSidebar">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>480</y>
+           <width>341</width>
+           <height>121</height>
+          </rect>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>341</width>
+           <height>121</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QFrame {
+	background-color:  rgb(49, 0, 124);
+	border: 1px solid black;
+}</string>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <widget class="QLabel" name="exportResultsLabel">
+          <property name="geometry">
+           <rect>
+            <x>20</x>
+            <y>30</y>
+            <width>301</width>
+            <height>51</height>
+           </rect>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	font-size: 21px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	border: 0px;
+	font-weight: bold;
+}</string>
+          </property>
+          <property name="text">
+           <string>Visualization / Export</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </widget>
+       </widget>
+      </item>
+      <item>
+       <widget class="QFrame" name="gridFrame">
+        <property name="maximumSize">
+         <size>
+          <width>341</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QFrame {
+	background-color: rgb(28, 0, 101);
+}</string>
+        </property>
+        <layout class="QGridLayout" name="backButtonGrid" rowstretch="0,0">
+         <property name="sizeConstraint">
+          <enum>QLayout::SetMinAndMaxSize</enum>
+         </property>
+         <property name="leftMargin">
+          <number>10</number>
+         </property>
+         <property name="topMargin">
+          <number>10</number>
+         </property>
+         <property name="rightMargin">
+          <number>10</number>
+         </property>
+         <property name="bottomMargin">
+          <number>10</number>
+         </property>
+         <item row="0" column="0">
+          <spacer name="verticalSpacer">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item row="1" column="1">
+          <spacer name="horizontalSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item row="1" column="0">
+          <widget class="QPushButton" name="back_button">
+           <property name="minimumSize">
+            <size>
+             <width>131</width>
+             <height>41</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>131</width>
+             <height>41</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+           </property>
+           <property name="text">
+            <string>Back</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <layout class="QVBoxLayout" name="config_confirm_layout" stretch="1,0,0,0,0,1,1">
+      <property name="spacing">
+       <number>30</number>
+      </property>
+      <property name="leftMargin">
+       <number>10</number>
+      </property>
+      <property name="topMargin">
+       <number>30</number>
+      </property>
+      <property name="rightMargin">
+       <number>10</number>
+      </property>
+      <property name="bottomMargin">
+       <number>30</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="config_preview_label">
+        <property name="styleSheet">
+         <string notr="true">QLabel {
+	font-size: 29px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+}</string>
+        </property>
+        <property name="text">
+         <string>Configuration Preview</string>
+        </property>
+        <property name="textFormat">
+         <enum>Qt::AutoText</enum>
+        </property>
+        <property name="scaledContents">
+         <bool>false</bool>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="config_desc_label">
+        <property name="styleSheet">
+         <string notr="true">QLabel {
+	color: white;
+	font-size: 14px;
+}</string>
+        </property>
+        <property name="text">
+         <string>Review the analysis configuration parameters below. These settings will be used for the quantitative ultrasound analysis.</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QScrollArea" name="configScrollArea">
+        <property name="styleSheet">
+         <string notr="true">QScrollArea {
+	border: none;
+	background-color: transparent;
+}
+
+QScrollBar:vertical {
+	background-color: rgb(60, 60, 60);
+	width: 12px;
+	border-radius: 6px;
+}
+
+QScrollBar::handle:vertical {
+	background-color: rgb(120, 120, 120);
+	border-radius: 6px;
+	min-height: 20px;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+	height: 0px;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+	background-color: transparent;
+}</string>
+        </property>
+        <property name="verticalScrollBarPolicy">
+         <enum>Qt::ScrollBarAsNeeded</enum>
+        </property>
+        <property name="horizontalScrollBarPolicy">
+         <enum>Qt::ScrollBarAsNeeded</enum>
+        </property>
+        <property name="widgetResizable">
+         <bool>true</bool>
+        </property>
+        <widget class="QWidget" name="configContainer">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>586</width>
+           <height>449</height>
+          </rect>
+         </property>
+         <layout class="QVBoxLayout" name="config_layout" stretch="0,0,0,0">
+          <property name="spacing">
+           <number>20</number>
+          </property>
+          <item>
+           <widget class="QGroupBox" name="freqGroup">
+            <property name="styleSheet">
+             <string notr="true">QGroupBox {
+	color: white;
+	font-weight: bold;
+	border: 2px solid rgb(99, 0, 174);
+	border-radius: 5px;
+	margin-top: 10px;
+	padding-top: 10px;
+}
+
+QGroupBox::title {
+	subcontrol-origin: margin;
+	left: 10px;
+	padding: 0 5px 0 5px;
+}</string>
+            </property>
+            <property name="title">
+             <string>Frequency Parameters</string>
+            </property>
+            <layout class="QFormLayout" name="freq_layout">
+             <property name="horizontalSpacing">
+              <number>10</number>
+             </property>
+             <property name="verticalSpacing">
+              <number>10</number>
+             </property>
+             <item row="0" column="0">
+              <widget class="QLabel" name="transducerFreqLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Transducer Frequency Band:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QLabel" name="transducerFreqValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="analysisFreqLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Analysis Frequency Band:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="QLabel" name="analysisFreqValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="0">
+              <widget class="QLabel" name="centerFreqLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Center Frequency:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="QLabel" name="centerFreqValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="0">
+              <widget class="QLabel" name="samplingFreqLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Sampling Frequency:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="1">
+              <widget class="QLabel" name="samplingFreqValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="windowGroup">
+            <property name="styleSheet">
+             <string notr="true">QGroupBox {
+	color: white;
+	font-weight: bold;
+	border: 2px solid rgb(99, 0, 174);
+	border-radius: 5px;
+	margin-top: 10px;
+	padding-top: 10px;
+}
+
+QGroupBox::title {
+	subcontrol-origin: margin;
+	left: 10px;
+	padding: 0 5px 0 5px;
+}</string>
+            </property>
+            <property name="title">
+             <string>Windowing Parameters</string>
+            </property>
+            <layout class="QFormLayout" name="window_layout">
+             <property name="horizontalSpacing">
+              <number>10</number>
+             </property>
+             <property name="verticalSpacing">
+              <number>10</number>
+             </property>
+             <item row="0" column="0">
+              <widget class="QLabel" name="axWinSizeLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Axial Window Size:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QLabel" name="axWinSizeValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="latWinSizeLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Lateral Window Size:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="QLabel" name="latWinSizeValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="0">
+              <widget class="QLabel" name="windowThreshLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Window Threshold:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="QLabel" name="windowThreshValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="0">
+              <widget class="QLabel" name="axialOverlapLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Axial Overlap:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="1">
+              <widget class="QLabel" name="axialOverlapValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+             <item row="4" column="0">
+              <widget class="QLabel" name="lateralOverlapLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Lateral Overlap:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="4" column="1">
+              <widget class="QLabel" name="lateralOverlapValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not set</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="group3d">
+            <property name="styleSheet">
+             <string notr="true">QGroupBox {
+	color: white;
+	font-weight: bold;
+	border: 2px solid rgb(99, 0, 174);
+	border-radius: 5px;
+	margin-top: 10px;
+	padding-top: 10px;
+}
+
+QGroupBox::title {
+	subcontrol-origin: margin;
+	left: 10px;
+	padding: 0 5px 0 5px;
+}</string>
+            </property>
+            <property name="title">
+             <string>3D Parameters</string>
+            </property>
+            <layout class="QFormLayout" name="layout3d">
+             <property name="horizontalSpacing">
+              <number>10</number>
+             </property>
+             <property name="verticalSpacing">
+              <number>10</number>
+             </property>
+             <item row="0" column="0">
+              <widget class="QLabel" name="corWinSizeLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Coronal Window Size:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QLabel" name="corWinSizeValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not used</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="coronalOverlapLabel">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: white;
+	font-size: 12px;
+}</string>
+               </property>
+               <property name="text">
+                <string>Coronal Overlap:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="QLabel" name="coronalOverlapValue">
+               <property name="styleSheet">
+                <string notr="true">QLabel {
+	color: rgb(0, 255, 127);
+	font-size: 12px;
+	font-weight: bold;
+}</string>
+               </property>
+               <property name="text">
+                <string>Not used</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <spacer name="verticalSpacer">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>40</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </widget>
+      </item>
+      <item alignment="Qt::AlignHCenter|Qt::AlignVCenter">
+       <widget class="QPushButton" name="save_option_button">
+        <property name="minimumSize">
+         <size>
+          <width>191</width>
+          <height>41</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>191</width>
+          <height>41</height>
+         </size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+        </property>
+        <property name="text">
+         <string>Save Configuration</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <layout class="QGridLayout" name="save_config_layout" rowstretch="1,10,10" columnstretch="1,10,10">
+        <property name="bottomMargin">
+         <number>10</number>
+        </property>
+        <property name="spacing">
+         <number>10</number>
+        </property>
+        <item row="0" column="1">
+         <widget class="QLineEdit" name="save_folder_input">
+          <property name="minimumSize">
+           <size>
+            <width>201</width>
+            <height>31</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>401</width>
+            <height>31</height>
+           </size>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLineEdit {
+	background-color: rgb(249, 249, 249);
+	color: black;
+}</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="0" alignment="Qt::AlignLeft|Qt::AlignVCenter">
+         <widget class="QLabel" name="dest_folder_label">
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	background-color: rgba(255, 255, 255, 0);
+	color: white;
+	font-size: 17px;
+}</string>
+          </property>
+          <property name="text">
+           <string>Dest Folder</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+          <property name="textInteractionFlags">
+           <set>Qt::NoTextInteraction</set>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="0" alignment="Qt::AlignLeft|Qt::AlignVCenter">
+         <widget class="QLabel" name="config_name_label">
+          <property name="styleSheet">
+           <string notr="true">QLabel {
+	background-color: rgba(255, 255, 255, 0);
+	color: white;
+	font-size: 17px;
+}</string>
+          </property>
+          <property name="text">
+           <string>Config Name</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+          <property name="textInteractionFlags">
+           <set>Qt::NoTextInteraction</set>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="QLineEdit" name="save_name_input">
+          <property name="minimumSize">
+           <size>
+            <width>201</width>
+            <height>31</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>401</width>
+            <height>31</height>
+           </size>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLineEdit {
+	background-color: rgb(249, 249, 249);
+	color: black;
+}</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="2">
+         <layout class="QHBoxLayout" name="chooseImageButtonsLayout_2">
+          <property name="spacing">
+           <number>10</number>
+          </property>
+          <item>
+           <widget class="QPushButton" name="choose_save_folder_button">
+            <property name="minimumSize">
+             <size>
+              <width>131</width>
+              <height>41</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>131</width>
+              <height>41</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+            </property>
+            <property name="text">
+             <string>Choose Folder</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="clear_save_folder_button">
+            <property name="minimumSize">
+             <size>
+              <width>131</width>
+              <height>41</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>131</width>
+              <height>41</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+            </property>
+            <property name="text">
+             <string>Clear Path</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item row="2" column="2">
+         <layout class="QHBoxLayout" name="chooseImageButtonsLayout_4">
+          <item>
+           <widget class="QPushButton" name="save_config_button">
+            <property name="minimumSize">
+             <size>
+              <width>131</width>
+              <height>41</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>131</width>
+              <height>41</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+            </property>
+            <property name="text">
+             <string>Save</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="back_from_save_button">
+            <property name="minimumSize">
+             <size>
+              <width>131</width>
+              <height>41</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>131</width>
+              <height>41</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+            </property>
+            <property name="text">
+             <string>Back</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </item>
+      <item alignment="Qt::AlignHCenter|Qt::AlignVCenter">
+       <widget class="QPushButton" name="confirm_config_button">
+        <property name="minimumSize">
+         <size>
+          <width>191</width>
+          <height>41</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>191</width>
+          <height>41</height>
+         </size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+        </property>
+        <property name="text">
+         <string>Confirm Configuration</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="verticalSpacer_11">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>20</width>
+          <height>40</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
