@@ -53,8 +53,6 @@ git submodule update --remote --merge
 
 ### Remaining things to do for this repository
 
-- [ ] Merge QuantUS-Plugins PR to main and update submodule reference here.
-- [ ] Move all QuantUS repos to a new "QuantUS" organization on Github.
 - [ ] Support plugin inputs from the GUI directly. Since we're using submodules,
         we don't want users copying and pasting files directly into the backend.
         Thus, there should be a new folder `engines/plugins` which can contain all
