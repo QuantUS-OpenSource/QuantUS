@@ -29,6 +29,7 @@ source .venv/bin/activate                           # Unix
 pip install --upgrade pip setuptools wheel
 pip install numpy
 pip install -r requirements.txt
+pip install pyradiomics==3.0.1 --no-build-isolation
 ./saveQt.sh                                         # Unix
 .\saveQt.sh                                         # Windows (cmd)
 ``` 
