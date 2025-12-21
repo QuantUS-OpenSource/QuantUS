@@ -15,7 +15,7 @@ Note that the GUI in this repository is incomplete. Specifically, the QUS GUI do
 To clone this repository, run
 
 ```shell
-git clone --recurse-submodules https://github.com/TUL-Dev/QuantUS.git
+git clone --recurse-submodules https://github.com/QuantUS-OpenSource/QuantUS.git
 ```
 
 To set up the Python virtual environment and install dependencies to run QuantUS, run the following commands. Let `PYTHON311` be the path to your Python3.11 interpreter.
@@ -29,6 +29,7 @@ source .venv/bin/activate                           # Unix
 pip install --upgrade pip setuptools wheel
 pip install numpy
 pip install -r requirements.txt
+pip install pyradiomics==3.0.1 --no-build-isolation
 ./saveQt.sh                                         # Unix
 .\saveQt.sh                                         # Windows (cmd)
 ``` 
