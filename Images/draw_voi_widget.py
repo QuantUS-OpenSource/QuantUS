@@ -20,7 +20,6 @@ from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
 from .spline import calculateSpline3D, calculateSpline
-from ...image_preprocessing.functions import enhance_image, imsharpen
 
 def _smooth_3d_mask(mask: np.ndarray) -> np.ndarray:
     """Apply 3D smoothing to the binary mask."""
@@ -342,7 +341,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 elif plane_ix == 1:  # Sagittal: y vs z
                     aspect = (self._image_data.pixdim[2]) / (self._image_data.pixdim[1]) if self._image_data.pixdim[2] != 0 else 1
                 elif plane_ix == 2:  # Coronal: x vs z
-                    aspect = (self._image_data.pixdim[1]) / (self._image_data.pixdim[0]) if self._image_data.pixdim[2] != 0 else 1
+                    aspect = (self._image_data.pixdim[2]) / (self._image_data.pixdim[0]) if self._image_data.pixdim[2] != 0 else 1
                     aspect = aspect * 0.5
                 else:
                     self.show_error(f"Invalid plane index: {plane_ix}")
@@ -375,17 +374,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     def _get_plane_slice(self, plane_ix: int):
         """Return 2D numpy slice for given plane index based on current crosshair."""
         idx = self._get_plane_indices(plane_ix)
-        
-        # Get the 3D volume for current time frame
-        current_frame_3d = self._pix_data[:, :, :, self._crosshair_xyzt[3]]
-        enhanced_volume = enhance_image(current_frame_3d, method='clahe', clip_limit=1.0)
-        enhanced_volume = enhance_image(enhanced_volume, method='gamma', gamma=1.2)
-        # enhanced_volume = imsharpen(enhanced_volume, radius=1.5, amount=0.8)
-        
-        # Extract the 2D slice from enhanced volume
-        slice_idx = list(idx[:3])  # Remove time dimension
-        arr = enhanced_volume[tuple(slice_idx)]
-        
+        arr = self._pix_data[idx]
         if arr.ndim != 2:
             arr = arr.squeeze()
         # Axial plane (index 0) needs transpose for correct orientation
