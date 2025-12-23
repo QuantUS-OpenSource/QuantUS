@@ -1,5 +1,6 @@
 import numpy as np
-from skimage import exposure, restoration, filters
+from skimage import exposure, filters
+from skimage.restoration import denoise_wavelet
 import cv2
 
 from .decorators import required_kwargs
@@ -94,38 +95,36 @@ def enhance_image(volume, method='clahe', **kwargs):
             enhanced[:,:,z] = exposure.adjust_sigmoid(slice_2d, cutoff=cutoff, gain=gain)      
     return enhanced
 
-def imsharpen(image, radius=1.5, amount=0.5):
+def denoise_ceus_wavelet(volume_3d, wavelet='db1', sigma_scale=0.8):
     """
-    Python equivalent of MATLAB's imsharpen function
+    Gentler wavelet denoising
     
     Args:
-        image: Input image (2D or 3D)
-        radius: Gaussian blur radius (equivalent to MATLAB 'Radius')
-        amount: Sharpening strength (equivalent to MATLAB 'Amount')
-    
-    Returns:
-        Sharpened image
+        sigma_scale: Scale factor for noise estimate (0.3-0.7 for gentle, 1.0 for normal)
     """
-    if image.ndim == 3:
-        # Process 3D volume slice by slice
-        sharpened = np.zeros_like(image, dtype=np.float64)
-        for z in range(image.shape[0]):
-            # Convert to float for processing
-            slice_float = image[z].astype(np.float64)
-            
-            # Create Gaussian blurred version
-            blurred = filters.gaussian(slice_float, sigma=radius)
-            
-            # Apply unsharp mask: original + amount * (original - blurred)
-            sharpened[z] = slice_float + amount * (slice_float - blurred)
-            
-    else:
-        # Process 2D image
-        slice_float = image.astype(np.float64)
-        blurred = filters.gaussian(slice_float, sigma=radius)
-        sharpened = slice_float + amount * (slice_float - blurred)
+    denoised = np.zeros_like(volume_3d, dtype=np.float32)
     
-    # Clip to valid range and convert back to original dtype
-    sharpened = np.clip(sharpened, 0, np.max(image))
+    for z in range(volume_3d.shape[2]):
+        slice_2d = volume_3d[:, :, z].astype(np.float32)
+        
+        # Normalize to [0, 1]
+        slice_norm = (slice_2d - slice_2d.min()) / (slice_2d.max() - slice_2d.min() + 1e-8)
+        
+        # Estimate sigma and scale it down
+        from skimage.restoration import estimate_sigma
+        sigma_est = estimate_sigma(slice_norm, average_sigmas=True)
+        
+        # Apply wavelet denoising with reduced sigma
+        denoised_slice = denoise_wavelet(
+            slice_norm,
+            method='BayesShrink',
+            mode='soft',
+            wavelet=wavelet,
+            rescale_sigma=True,
+            sigma=sigma_est * sigma_scale  # KEY: Reduce denoising strength
+        )
+        
+        # Scale back
+        denoised[:, :, z] = denoised_slice * (slice_2d.max() - slice_2d.min()) + slice_2d.min()
     
-    return sharpened.astype(image.dtype)
+    return denoised
