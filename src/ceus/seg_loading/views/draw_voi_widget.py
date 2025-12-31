@@ -341,13 +341,13 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             try:
                 fig = canvas.figure
                 if plane_ix == 0:  # Axial: y vs x
-                    aspect = (self._image_data.pixdim[1]) / (self._image_data.pixdim[0]) if self._image_data.pixdim[0] != 0 else 1
-                    aspect = aspect * 0.5
+                    aspect = (self._image_data.pixdim[0]) / (self._image_data.pixdim[1]) if self._image_data.pixdim[0] != 0 else 1
+                    aspect = aspect * 1.8
                 elif plane_ix == 1:  # Sagittal: y vs z
                     aspect = (self._image_data.pixdim[2]) / (self._image_data.pixdim[1]) if self._image_data.pixdim[2] != 0 else 1
-                    aspect = aspect * 1.5
+                    aspect = aspect * 1.0
                 elif plane_ix == 2:  # Coronal: x vs z
-                    aspect = (self._image_data.pixdim[1]) / (self._image_data.pixdim[0]) if self._image_data.pixdim[2] != 0 else 1
+                    aspect = (self._image_data.pixdim[2]) / (self._image_data.pixdim[0]) if self._image_data.pixdim[2] != 0 else 1
                     aspect = aspect * 0.5
                 else:
                     self.show_error(f"Invalid plane index: {plane_ix}")
@@ -404,9 +404,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     
     def _enhance_slice(self, slice_2d: np.ndarray) -> np.ndarray:
         """Enhance a 2D image slice using predefined enhancement methods."""
-        enhanced = enhance_image(slice_2d, method='clahe', clip_limit=1.0)
-        enhanced = enhance_image(enhanced, method='gamma', gamma=1.2)
-        enhanced = denoise_ceus_wavelet(enhanced, wavelet='db1')
+        enhanced = enhance_image(slice_2d, method='clahe', clip_limit=1.2)
+        enhanced = enhance_image(enhanced, method='gamma', gamma=1.5)
+        # enhanced = denoise_ceus_wavelet(enhanced, wavelet='db1')
+        # enhanced = slice_2d
        
         return enhanced
 
