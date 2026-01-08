@@ -380,10 +380,10 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
     def _setup_dicom_overlay_control(self) -> None:
         """Setup DICOM overlay control checkbox and transparency slider."""
         # Get references to the UI controls from the .ui file
-        self._dicom_overlay_checkbox = self._ui.findChild(QCheckBox, "dicom_overlay_checkbox")
-        self._transparency_slider = self._ui.findChild(QSlider, "transparency_slider")
-        self._transparency_label = self._ui.findChild(QLabel, "transparency_label")
-        self._transparency_value_label = self._ui.findChild(QLabel, "transparency_value_label")
+        self._dicom_overlay_checkbox = self._ui.dicom_overlay_checkbox
+        self._transparency_slider = self._ui.transparency_slider
+        self._transparency_label = self._ui.transparency_label
+        self._transparency_value_label = self._ui.transparency_value_label
         
         # Check if DICOM overlay is available and show/hide controls accordingly
         if not self._image_data.dicom_available:
