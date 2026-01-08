@@ -12,7 +12,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import scipy.interpolate as interpolate
 
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, QVBoxLayout, QCheckBox
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.roi_drawing_ui import Ui_constructRoi
@@ -65,6 +65,15 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         
         # Drawing parameters
         self._min_point_distance = 5.0  # Minimum distance between points in pixels
+        
+        # DICOM overlay control variables
+        self._dicom_overlay_checkbox: Optional[QCheckBox] = None
+        self._transparency_slider: Optional[QSlider] = None
+        self._transparency_label: Optional[QLabel] = None
+        self._transparency_value_label: Optional[QLabel] = None
+        self._overlay_enabled = False  # Track if overlay is currently enabled
+        self._transparency_value = 50  # Default transparency (0-100)
+        self._original_bmode_im = None  # Store original B-mode for overlay blending
 
         self._setup_ui()
         self._connect_signals()
@@ -147,6 +156,65 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         """
         return self._min_point_distance
 
+    def _apply_dicom_overlay(self, bmode_image: np.ndarray) -> np.ndarray:
+        """
+        Apply DICOM overlay with adjustable transparency to B-mode image.
+        
+        Args:
+            bmode_image: The RF-derived B-mode image to blend with DICOM
+            
+        Returns:
+            Blended image with DICOM overlay applied if enabled, otherwise original B-mode
+        """
+        if not self._overlay_enabled or not self._image_data.dicom_available:
+            return bmode_image
+            
+        if self._image_data.dicom_image is None:
+            return bmode_image
+            
+        try:
+            # Get transparency value (0-100) and convert to alpha (0.0-1.0)
+            alpha = self._transparency_value / 100.0
+            
+            # Ensure both images have the same shape
+            dicom_im = self._image_data.dicom_image
+            if dicom_im.shape != bmode_image.shape:
+                # Resize DICOM to match B-mode if needed
+                from skimage.transform import resize
+                dicom_im = resize(dicom_im, bmode_image.shape, preserve_range=True, anti_aliasing=True)
+                dicom_im = dicom_im.astype(np.uint8)
+            
+            # Normalize both images to 0-255 range if needed
+            bmode_norm = bmode_image.astype(np.float32)
+            dicom_norm = dicom_im.astype(np.float32)
+            
+            # Apply alpha blending: output = (1-alpha) * Bmode + alpha * DICOM
+            blended = (1.0 - alpha) * bmode_norm + alpha * dicom_norm
+            
+            # Clip and convert back to uint8
+            blended = np.clip(blended, 0, 255).astype(np.uint8)
+            
+            return blended
+            
+        except Exception as e:
+            print(f"Warning: Failed to apply DICOM overlay: {e}")
+            return bmode_image
+    
+    def _update_overlay_display(self) -> None:
+        """
+        Update the display when overlay settings change.
+        This method handles the real-time overlay updates.
+        """
+        if self._original_bmode_im is not None:
+            # Apply overlay to the original B-mode image
+            self._displayed_im = self._apply_dicom_overlay(self._original_bmode_im.copy())
+            
+            # Apply brightness adjustment on top of the blended image
+            self._apply_brightness_adjustment()
+            
+            # Update the display
+            self._update_display()
+
     def _update_drawing_status(self) -> None:
         """Update the drawing status to show current settings."""
         if self._current_drawing_mode == 'points':
@@ -222,6 +290,9 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         
         # Add brightness control
         self._setup_brightness_control()
+        
+        # Add DICOM overlay control
+        self._setup_dicom_overlay_control()
         
         # Display image for ROI drawing
         self._display_image_for_roi()
@@ -306,6 +377,43 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         # Insert it at the beginning of the layout (after the title)
         self._ui.draw_roi_layout.insertLayout(1, brightness_layout)
 
+    def _setup_dicom_overlay_control(self) -> None:
+        """Setup DICOM overlay control checkbox and transparency slider."""
+        # Get references to the UI controls from the .ui file
+        self._dicom_overlay_checkbox = self._ui.findChild(QCheckBox, "dicom_overlay_checkbox")
+        self._transparency_slider = self._ui.findChild(QSlider, "transparency_slider")
+        self._transparency_label = self._ui.findChild(QLabel, "transparency_label")
+        self._transparency_value_label = self._ui.findChild(QLabel, "transparency_value_label")
+        
+        # Check if DICOM overlay is available and show/hide controls accordingly
+        if not self._image_data.dicom_available:
+            # Hide overlay controls if DICOM is not available
+            if self._dicom_overlay_checkbox:
+                self._dicom_overlay_checkbox.hide()
+            if self._transparency_slider:
+                self._transparency_slider.hide()
+            if self._transparency_label:
+                self._transparency_label.hide()
+            if self._transparency_value_label:
+                self._transparency_value_label.hide()
+        else:
+            # Show overlay controls and set initial values
+            if self._dicom_overlay_checkbox:
+                self._dicom_overlay_checkbox.show()
+                self._dicom_overlay_checkbox.setChecked(False)  # Start with overlay disabled
+            
+            if self._transparency_slider:
+                self._transparency_slider.show()
+                self._transparency_slider.setValue(50)  # Default transparency
+                self._transparency_slider.setEnabled(False)  # Disabled until overlay is enabled
+            
+            if self._transparency_label:
+                self._transparency_label.show()
+            
+            if self._transparency_value_label:
+                self._transparency_value_label.show()
+                self._transparency_value_label.setText("50")
+
     def _connect_signals(self) -> None:
         """Connect UI signals to internal handlers."""
         self._ui.back_button.clicked.connect(self.back_requested.emit)
@@ -324,6 +432,12 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         # Connect brightness slider
         if self._brightness_slider:
             self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
+        
+        # Connect DICOM overlay controls
+        if self._dicom_overlay_checkbox:
+            self._dicom_overlay_checkbox.toggled.connect(self._on_overlay_toggled)
+        if self._transparency_slider:
+            self._transparency_slider.valueChanged.connect(self._on_transparency_changed)
 
     def _on_brightness_changed(self, value: int) -> None:
         """Handle brightness slider change."""
@@ -332,6 +446,27 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             self._brightness_value_label.setText(str(value))
         self._apply_brightness_adjustment()
         self._update_display()
+
+    def _on_overlay_toggled(self, checked: bool) -> None:
+        """Handle DICOM overlay checkbox toggle."""
+        self._overlay_enabled = checked
+        
+        # Enable/disable transparency slider based on overlay state
+        if self._transparency_slider:
+            self._transparency_slider.setEnabled(checked)
+        
+        # Update display with new overlay state
+        self._update_overlay_display()
+
+    def _on_transparency_changed(self, value: int) -> None:
+        """Handle transparency slider change."""
+        self._transparency_value = value
+        if self._transparency_value_label:
+            self._transparency_value_label.setText(str(value))
+        
+        # Update display if overlay is enabled
+        if self._overlay_enabled:
+            self._update_overlay_display()
 
     def _apply_brightness_adjustment(self) -> None:
         """Apply brightness adjustment to the displayed image using exponential function."""
@@ -415,12 +550,20 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             im = self._image_data.sc_bmode if self._image_data.sc_bmode is not None else self._image_data.bmode
             if im.ndim == 2:
                 self._original_displayed_im = im.copy()
+                self._original_bmode_im = im.copy()  # Store original B-mode for overlay
             else:
                 if self._frame < 0 or self._frame >= im.shape[0]:
                     raise ValueError(f"Frame {self._frame} is out of bounds for image with {im.shape[0]} frames")
                 self._original_displayed_im = im[self._frame].copy()
+                self._original_bmode_im = im[self._frame].copy()  # Store original B-mode for overlay
 
-            # Apply initial brightness adjustment
+            # Apply DICOM overlay first (if enabled)
+            if self._overlay_enabled:
+                self._displayed_im = self._apply_dicom_overlay(self._original_bmode_im.copy())
+            else:
+                self._displayed_im = self._original_bmode_im.copy()
+
+            # Apply brightness adjustment on top
             self._apply_brightness_adjustment()
 
             self._plot_im_on_ax(self._ax)
