@@ -379,40 +379,111 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
 
     def _setup_dicom_overlay_control(self) -> None:
         """Setup DICOM overlay control checkbox and transparency slider."""
-        # Get references to the UI controls from the .ui file
-        self._dicom_overlay_checkbox = self._ui.dicom_overlay_checkbox
-        self._transparency_slider = self._ui.transparency_slider
-        self._transparency_label = self._ui.transparency_label
-        self._transparency_value_label = self._ui.transparency_value_label
+        # Create DICOM overlay controls programmatically since they're not in the UI file
+        from PyQt6.QtWidgets import QCheckBox, QSlider, QLabel
+        
+        # Create checkbox
+        self._dicom_overlay_checkbox = QCheckBox("Show DICOM Overlay")
+        self._dicom_overlay_checkbox.setMinimumSize(200, 41)
+        self._dicom_overlay_checkbox.setMaximumSize(200, 41)
+        self._dicom_overlay_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: rgb(255, 255, 255);
+                font-size: 15px;
+                background-color: rgba(255, 255, 255, 0);
+                border: 0px;
+            }
+            QCheckBox::indicator {
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                background-color: rgb(90, 37, 255);
+                border: 2px solid rgb(255, 255, 255);
+            }
+            QCheckBox::indicator:checked {
+                background-color: rgb(90, 37, 255);
+                border: 2px solid rgb(255, 255, 255);
+            }
+        """)
+        
+        # Create transparency label
+        self._transparency_label = QLabel("Transparency:")
+        self._transparency_label.setMinimumSize(100, 41)
+        self._transparency_label.setMaximumSize(100, 41)
+        self._transparency_label.setStyleSheet("""
+            QLabel {
+                font-size: 15px;
+                color: rgb(255, 255, 255);
+                background-color: rgba(255, 255, 255, 0);
+            }
+        """)
+        self._transparency_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        
+        # Create transparency slider
+        self._transparency_slider = QSlider()
+        self._transparency_slider.setMinimumSize(200, 41)
+        self._transparency_slider.setMaximumSize(200, 41)
+        self._transparency_slider.setOrientation(Qt.Orientation.Horizontal)
+        self._transparency_slider.setMinimum(0)
+        self._transparency_slider.setMaximum(100)
+        self._transparency_slider.setValue(50)
+        self._transparency_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: 1px solid #999999;
+                height: 8px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #B1B1B1, stop:1 #c4c4c4);
+                margin: 2px 0;
+            }
+            QSlider::handle:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
+                border: 1px solid #5c5c5c;
+                width: 18px;
+                margin: 2px 0;
+                border-radius: 3px;
+            }
+        """)
+        
+        # Create transparency value label
+        self._transparency_value_label = QLabel("50")
+        self._transparency_value_label.setMinimumSize(40, 41)
+        self._transparency_value_label.setMaximumSize(40, 41)
+        self._transparency_value_label.setStyleSheet("""
+            QLabel {
+                font-size: 15px;
+                color: rgb(255, 255, 255);
+                background-color: rgba(255, 255, 255, 0);
+            }
+        """)
+        self._transparency_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Create layout for overlay controls
+        overlay_layout = QHBoxLayout()
+        overlay_layout.setSpacing(10)
+        overlay_layout.addWidget(self._dicom_overlay_checkbox)
+        overlay_layout.addWidget(self._transparency_label)
+        overlay_layout.addWidget(self._transparency_slider)
+        overlay_layout.addWidget(self._transparency_value_label)
+        
+        # Insert the overlay layout into the main ROI layout
+        self._ui.draw_roi_layout.insertLayout(2, overlay_layout)
         
         # Check if DICOM overlay is available and show/hide controls accordingly
         if not self._image_data.dicom_available:
             # Hide overlay controls if DICOM is not available
-            if self._dicom_overlay_checkbox:
-                self._dicom_overlay_checkbox.hide()
-            if self._transparency_slider:
-                self._transparency_slider.hide()
-            if self._transparency_label:
-                self._transparency_label.hide()
-            if self._transparency_value_label:
-                self._transparency_value_label.hide()
+            self._dicom_overlay_checkbox.hide()
+            self._transparency_slider.hide()
+            self._transparency_label.hide()
+            self._transparency_value_label.hide()
         else:
             # Show overlay controls and set initial values
-            if self._dicom_overlay_checkbox:
-                self._dicom_overlay_checkbox.show()
-                self._dicom_overlay_checkbox.setChecked(False)  # Start with overlay disabled
-            
-            if self._transparency_slider:
-                self._transparency_slider.show()
-                self._transparency_slider.setValue(50)  # Default transparency
-                self._transparency_slider.setEnabled(False)  # Disabled until overlay is enabled
-            
-            if self._transparency_label:
-                self._transparency_label.show()
-            
-            if self._transparency_value_label:
-                self._transparency_value_label.show()
-                self._transparency_value_label.setText("50")
+            self._dicom_overlay_checkbox.show()
+            self._dicom_overlay_checkbox.setChecked(False)  # Start with overlay disabled
+            self._transparency_slider.show()
+            self._transparency_slider.setValue(50)  # Default transparency
+            self._transparency_slider.setEnabled(False)  # Disabled until overlay is enabled
+            self._transparency_label.show()
+            self._transparency_value_label.show()
+            self._transparency_value_label.setText("50")
 
     def _connect_signals(self) -> None:
         """Connect UI signals to internal handlers."""
