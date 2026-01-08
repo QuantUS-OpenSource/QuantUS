@@ -12,7 +12,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import scipy.interpolate as interpolate
 
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, QVBoxLayout, QCheckBox
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, QVBoxLayout, QCheckBox, QPushButton
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.roi_drawing_ui import Ui_constructRoi
@@ -71,6 +71,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._transparency_slider: Optional[QSlider] = None
         self._transparency_label: Optional[QLabel] = None
         self._transparency_value_label: Optional[QLabel] = None
+        self._load_dicom_button: Optional[QPushButton] = None
         self._overlay_enabled = False  # Track if overlay is currently enabled
         self._transparency_value = 50  # Default transparency (0-100)
         self._original_bmode_im = None  # Store original B-mode for overlay blending
@@ -178,6 +179,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             
             # Ensure both images have the same shape
             dicom_im = self._image_data.dicom_image
+            
             if dicom_im.shape != bmode_image.shape:
                 # Resize DICOM to match B-mode if needed
                 from skimage.transform import resize
@@ -188,7 +190,9 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             bmode_norm = bmode_image.astype(np.float32)
             dicom_norm = dicom_im.astype(np.float32)
             
-            # Apply alpha blending: output = (1-alpha) * Bmode + alpha * DICOM
+            # Apply direct alpha blending: output = (1-alpha) * Bmode + alpha * DICOM
+            # At alpha=0 (transparency=0): output = Bmode (only B-mode visible)
+            # At alpha=1 (transparency=100): output = DICOM (only DICOM visible)
             blended = (1.0 - alpha) * bmode_norm + alpha * dicom_norm
             
             # Clip and convert back to uint8
@@ -386,6 +390,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             self._transparency_slider = self._ui.transparency_slider
             self._transparency_label = self._ui.transparency_label
             self._transparency_value_label = self._ui.transparency_value_label
+            self._load_dicom_button = self._ui.load_dicom_button
         except AttributeError:
             # If controls don't exist in UI, create them programmatically as fallback
             self._create_overlay_controls_programmatically()
@@ -398,6 +403,8 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             self._transparency_slider.hide()
             self._transparency_label.hide()
             self._transparency_value_label.hide()
+            # Show Load DICOM button
+            self._load_dicom_button.show()
         else:
             # Show overlay controls and set initial values
             self._dicom_overlay_checkbox.show()
@@ -408,10 +415,12 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             self._transparency_label.show()
             self._transparency_value_label.show()
             self._transparency_value_label.setText("50")
+            # Hide Load DICOM button since DICOM is already loaded
+            self._load_dicom_button.hide()
     
     def _create_overlay_controls_programmatically(self) -> None:
         """Create DICOM overlay controls programmatically as fallback."""
-        from PyQt6.QtWidgets import QCheckBox, QSlider, QLabel
+        from PyQt6.QtWidgets import QCheckBox, QSlider, QLabel, QPushButton
         
         # Create checkbox
         self._dicom_overlay_checkbox = QCheckBox("Show DICOM Overlay")
@@ -434,6 +443,26 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             QCheckBox::indicator:checked {
                 background-color: rgb(90, 37, 255);
                 border: 2px solid rgb(255, 255, 255);
+            }
+        """)
+        
+        # Create Load DICOM button
+        self._load_dicom_button = QPushButton("Load DICOM File")
+        self._load_dicom_button.setMinimumSize(200, 41)
+        self._load_dicom_button.setMaximumSize(200, 41)
+        self._load_dicom_button.setStyleSheet("""
+            QPushButton {
+                background-color: rgb(90, 37, 255);
+                color: rgb(255, 255, 255);
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: rgb(120, 67, 255);
+            }
+            QPushButton:pressed {
+                background-color: rgb(60, 17, 195);
             }
         """)
         
@@ -487,16 +516,29 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         """)
         self._transparency_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # Create layout for overlay controls
-        overlay_layout = QHBoxLayout()
-        overlay_layout.setSpacing(10)
-        overlay_layout.addWidget(self._dicom_overlay_checkbox)
-        overlay_layout.addWidget(self._transparency_label)
-        overlay_layout.addWidget(self._transparency_slider)
-        overlay_layout.addWidget(self._transparency_value_label)
+        # Create layout for overlay controls (vertical layout)
+        overlay_main_layout = QVBoxLayout()
+        overlay_main_layout.setSpacing(10)
+        
+        # First row: checkbox and load button
+        overlay_button_layout = QHBoxLayout()
+        overlay_button_layout.setSpacing(10)
+        overlay_button_layout.addWidget(self._dicom_overlay_checkbox)
+        overlay_button_layout.addWidget(self._load_dicom_button)
+        
+        # Second row: transparency controls
+        overlay_transparency_layout = QHBoxLayout()
+        overlay_transparency_layout.setSpacing(10)
+        overlay_transparency_layout.addWidget(self._transparency_label)
+        overlay_transparency_layout.addWidget(self._transparency_slider)
+        overlay_transparency_layout.addWidget(self._transparency_value_label)
+        
+        # Add both layouts to main overlay layout
+        overlay_main_layout.addLayout(overlay_button_layout)
+        overlay_main_layout.addLayout(overlay_transparency_layout)
         
         # Insert the overlay layout into the main ROI layout
-        self._ui.draw_roi_layout.insertLayout(2, overlay_layout)
+        self._ui.draw_roi_layout.insertLayout(2, overlay_main_layout)
         
         # Apply visibility logic
         if not self._image_data.dicom_available:
@@ -504,6 +546,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             self._transparency_slider.hide()
             self._transparency_label.hide()
             self._transparency_value_label.hide()
+            self._load_dicom_button.show()
         else:
             self._dicom_overlay_checkbox.show()
             self._dicom_overlay_checkbox.setChecked(False)
@@ -513,6 +556,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             self._transparency_label.show()
             self._transparency_value_label.show()
             self._transparency_value_label.setText("50")
+            self._load_dicom_button.hide()
 
     def _connect_signals(self) -> None:
         """Connect UI signals to internal handlers."""
@@ -538,6 +582,8 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             self._dicom_overlay_checkbox.toggled.connect(self._on_overlay_toggled)
         if self._transparency_slider:
             self._transparency_slider.valueChanged.connect(self._on_transparency_changed)
+        if self._load_dicom_button:
+            self._load_dicom_button.clicked.connect(self._on_load_dicom_clicked)
 
     def _on_brightness_changed(self, value: int) -> None:
         """Handle brightness slider change."""
@@ -567,18 +613,56 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         # Update display if overlay is enabled
         if self._overlay_enabled:
             self._update_overlay_display()
+    
+    def _on_load_dicom_clicked(self) -> None:
+        """Handle Load DICOM button click."""
+        # Open file dialog to select DICOM file
+        dicom_file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select DICOM File",
+            "",
+            "DICOM Files (*.dcm *.dicom *.DICOM);;All Files (*)"
+        )
+        
+        if dicom_file:
+            # Try to load the DICOM file
+            if self._image_data.load_dicom_file(dicom_file):
+                # Successfully loaded - update UI
+                if self._load_dicom_button:
+                    self._load_dicom_button.hide()
+                if self._dicom_overlay_checkbox:
+                    self._dicom_overlay_checkbox.show()
+                    self._dicom_overlay_checkbox.setChecked(False)
+                if self._transparency_slider:
+                    self._transparency_slider.show()
+                    self._transparency_slider.setValue(50)
+                    self._transparency_slider.setEnabled(False)
+                if self._transparency_label:
+                    self._transparency_label.show()
+                if self._transparency_value_label:
+                    self._transparency_value_label.show()
+                    self._transparency_value_label.setText("50")
+            else:
+                # Failed to load - show error message
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "DICOM Load Error",
+                    "Failed to load the selected DICOM file. Please check the file format and try again."
+                )
 
     def _apply_brightness_adjustment(self) -> None:
         """Apply brightness adjustment to the displayed image using exponential function."""
-        if self._original_displayed_im is None:
+        if self._displayed_im is None:
             return
             
         # Calculate exponential coefficient based on brightness slider (0-100)
         # Map 0-100 to 0.05-5.0 for more intense exponential range
         exp_coefficient = 0.05 + (self._brightness_value / 100.0) * 4.95
         
-        # Apply exponential brightness adjustment
-        adjusted_im = self._original_displayed_im.astype(np.float32)
+        # Apply exponential brightness adjustment to the current displayed image
+        # This preserves any overlay that has already been applied
+        adjusted_im = self._displayed_im.astype(np.float32)
         
         # Normalize to 0-1 range for exponential operation
         normalized_im = adjusted_im / 255.0

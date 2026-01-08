@@ -1021,6 +1021,40 @@ QSlider::handle:horizontal {
        </layout>
       </item>
       <item>
+       <widget class="QPushButton" name="load_dicom_button">
+        <property name="minimumSize">
+         <size>
+          <width>200</width>
+          <height>41</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>200</width>
+          <height>41</height>
+         </size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QPushButton {
+	background-color: rgb(90, 37, 255);
+	color: rgb(255, 255, 255);
+	border-radius: 10px;
+	font-size: 14px;
+	font-weight: bold;
+}
+QPushButton:hover {
+	background-color: rgb(120, 67, 255);
+}
+QPushButton:pressed {
+	background-color: rgb(60, 17, 195);
+}</string>
+        </property>
+        <property name="text">
+         <string>Load DICOM File</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <layout class="QHBoxLayout" name="horizontalLayout_4">
         <item>
          <widget class="QPushButton" name="back_from_drag_button">
