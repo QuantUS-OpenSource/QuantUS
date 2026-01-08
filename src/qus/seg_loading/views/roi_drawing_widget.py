@@ -379,7 +379,38 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
 
     def _setup_dicom_overlay_control(self) -> None:
         """Setup DICOM overlay control checkbox and transparency slider."""
-        # Create DICOM overlay controls programmatically since they're not in the UI file
+        # Get references to the UI controls from the .ui file
+        # These should be available after we add them to the UI file
+        try:
+            self._dicom_overlay_checkbox = self._ui.dicom_overlay_checkbox
+            self._transparency_slider = self._ui.transparency_slider
+            self._transparency_label = self._ui.transparency_label
+            self._transparency_value_label = self._ui.transparency_value_label
+        except AttributeError:
+            # If controls don't exist in UI, create them programmatically as fallback
+            self._create_overlay_controls_programmatically()
+            return
+        
+        # Check if DICOM overlay is available and show/hide controls accordingly
+        if not self._image_data.dicom_available:
+            # Hide overlay controls if DICOM is not available
+            self._dicom_overlay_checkbox.hide()
+            self._transparency_slider.hide()
+            self._transparency_label.hide()
+            self._transparency_value_label.hide()
+        else:
+            # Show overlay controls and set initial values
+            self._dicom_overlay_checkbox.show()
+            self._dicom_overlay_checkbox.setChecked(False)  # Start with overlay disabled
+            self._transparency_slider.show()
+            self._transparency_slider.setValue(50)  # Default transparency
+            self._transparency_slider.setEnabled(False)  # Disabled until overlay is enabled
+            self._transparency_label.show()
+            self._transparency_value_label.show()
+            self._transparency_value_label.setText("50")
+    
+    def _create_overlay_controls_programmatically(self) -> None:
+        """Create DICOM overlay controls programmatically as fallback."""
         from PyQt6.QtWidgets import QCheckBox, QSlider, QLabel
         
         # Create checkbox
@@ -467,20 +498,18 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         # Insert the overlay layout into the main ROI layout
         self._ui.draw_roi_layout.insertLayout(2, overlay_layout)
         
-        # Check if DICOM overlay is available and show/hide controls accordingly
+        # Apply visibility logic
         if not self._image_data.dicom_available:
-            # Hide overlay controls if DICOM is not available
             self._dicom_overlay_checkbox.hide()
             self._transparency_slider.hide()
             self._transparency_label.hide()
             self._transparency_value_label.hide()
         else:
-            # Show overlay controls and set initial values
             self._dicom_overlay_checkbox.show()
-            self._dicom_overlay_checkbox.setChecked(False)  # Start with overlay disabled
+            self._dicom_overlay_checkbox.setChecked(False)
             self._transparency_slider.show()
-            self._transparency_slider.setValue(50)  # Default transparency
-            self._transparency_slider.setEnabled(False)  # Disabled until overlay is enabled
+            self._transparency_slider.setValue(50)
+            self._transparency_slider.setEnabled(False)
             self._transparency_label.show()
             self._transparency_value_label.show()
             self._transparency_value_label.setText("50")
