@@ -12,7 +12,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import scipy.interpolate as interpolate
 
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, QVBoxLayout, QCheckBox, QPushButton
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, QCheckBox, QPushButton
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.roi_drawing_ui import Ui_constructRoi
@@ -167,10 +167,20 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         Returns:
             Blended image with DICOM overlay applied if enabled, otherwise original B-mode
         """
-        if not self._overlay_enabled or not self._image_data.dicom_available:
+        if not self._overlay_enabled:
+            return bmode_image
+        
+        # Access DICOM data from model via parent controller
+        dicom_data = None
+        if hasattr(self, '_parent_controller') and self._parent_controller:
+            if hasattr(self._parent_controller, 'model'):
+                dicom_data = self._parent_controller.model.get_dicom_data()
+        
+        if not dicom_data or not dicom_data.get('available'):
             return bmode_image
             
-        if self._image_data.dicom_image is None:
+        dicom_image = dicom_data.get('image')
+        if dicom_image is None:
             return bmode_image
             
         try:
@@ -178,7 +188,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             alpha = self._transparency_value / 100.0
             
             # Ensure both images have the same shape
-            dicom_im = self._image_data.dicom_image
+            dicom_im = dicom_image
             
             if dicom_im.shape != bmode_image.shape:
                 # Resize DICOM to match B-mode if needed
@@ -320,84 +330,30 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
 
     def _setup_brightness_control(self) -> None:
         """Setup brightness control slider and label."""
-        # Create a horizontal layout for brightness control
-        brightness_layout = QHBoxLayout()
+        self._brightness_label = self._ui.brightness_label
+        self._brightness_slider = self._ui.brightness_slider
+        self._brightness_value_label = self._ui.brightness_value_label
         
-        # Create brightness label
-        self._brightness_label = QLabel("Brightness:")
-        self._brightness_label.setStyleSheet("""
-            QLabel {
-                font-size: 15px;
-                color: rgb(255, 255, 255);
-                background-color: rgba(255, 255, 255, 0);
-            }
-        """)
-        self._brightness_label.setMinimumSize(80, 41)
-        self._brightness_label.setMaximumSize(80, 41)
-        self._brightness_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        
-        # Create brightness slider
-        self._brightness_slider = QSlider()
-        self._brightness_slider.setOrientation(Qt.Orientation.Horizontal)
-        self._brightness_slider.setRange(0, 100)
+        # Initialize values
         self._brightness_slider.setValue(self._brightness_value)
-        self._brightness_slider.setMinimumSize(200, 41)
-        self._brightness_slider.setMaximumSize(200, 41)
-        self._brightness_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: 1px solid #999999;
-                height: 8px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #B1B1B1, stop:1 #c4c4c4);
-                margin: 2px 0;
-            }
-            QSlider::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
-                border: 1px solid #5c5c5c;
-                width: 18px;
-                margin: 2px 0;
-                border-radius: 3px;
-            }
-        """)
-        
-        # Create brightness value label
-        self._brightness_value_label = QLabel(str(self._brightness_value))
-        self._brightness_value_label.setStyleSheet("""
-            QLabel {
-                font-size: 15px;
-                color: rgb(255, 255, 255);
-                background-color: rgba(255, 255, 255, 0);
-            }
-        """)
-        self._brightness_value_label.setMinimumSize(30, 41)
-        self._brightness_value_label.setMaximumSize(30, 41)
-        self._brightness_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # Add widgets to layout
-        brightness_layout.addWidget(self._brightness_label)
-        brightness_layout.addWidget(self._brightness_slider)
-        brightness_layout.addWidget(self._brightness_value_label)
-        
-        # Add brightness control to the draw_roi_layout
-        # Insert it at the beginning of the layout (after the title)
-        self._ui.draw_roi_layout.insertLayout(1, brightness_layout)
+        self._brightness_value_label.setText(str(self._brightness_value))
 
     def _setup_dicom_overlay_control(self) -> None:
         """Setup DICOM overlay control checkbox and transparency slider."""
         # Get references to the UI controls from the .ui file
-        # These should be available after we add them to the UI file
-        try:
-            self._dicom_overlay_checkbox = self._ui.dicom_overlay_checkbox
-            self._transparency_slider = self._ui.transparency_slider
-            self._transparency_label = self._ui.transparency_label
-            self._transparency_value_label = self._ui.transparency_value_label
-            self._load_dicom_button = self._ui.load_dicom_button
-        except AttributeError:
-            # If controls don't exist in UI, create them programmatically as fallback
-            self._create_overlay_controls_programmatically()
-            return
+        self._dicom_overlay_checkbox = self._ui.dicom_overlay_checkbox
+        self._transparency_slider = self._ui.transparency_slider
+        self._transparency_label = self._ui.transparency_label
+        self._transparency_value_label = self._ui.transparency_value_label
+        self._load_dicom_button = self._ui.load_dicom_button
         
-        # Check if DICOM overlay is available and show/hide controls accordingly
-        if not self._image_data.dicom_available:
+        # Check model for DICOM availability
+        dicom_available = False
+        if hasattr(self, '_parent_controller') and self._parent_controller:
+            if hasattr(self._parent_controller, 'model'):
+                dicom_available = self._parent_controller.model.dicom_available
+        
+        if not dicom_available:
             # Hide overlay controls if DICOM is not available
             self._dicom_overlay_checkbox.hide()
             self._transparency_slider.hide()
@@ -417,146 +373,6 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             self._transparency_value_label.setText("50")
             # Hide Load DICOM button since DICOM is already loaded
             self._load_dicom_button.hide()
-    
-    def _create_overlay_controls_programmatically(self) -> None:
-        """Create DICOM overlay controls programmatically as fallback."""
-        from PyQt6.QtWidgets import QCheckBox, QSlider, QLabel, QPushButton
-        
-        # Create checkbox
-        self._dicom_overlay_checkbox = QCheckBox("Show DICOM Overlay")
-        self._dicom_overlay_checkbox.setMinimumSize(200, 41)
-        self._dicom_overlay_checkbox.setMaximumSize(200, 41)
-        self._dicom_overlay_checkbox.setStyleSheet("""
-            QCheckBox {
-                color: rgb(255, 255, 255);
-                font-size: 15px;
-                background-color: rgba(255, 255, 255, 0);
-                border: 0px;
-            }
-            QCheckBox::indicator {
-                width: 20px;
-                height: 20px;
-                border-radius: 10px;
-                background-color: rgb(90, 37, 255);
-                border: 2px solid rgb(255, 255, 255);
-            }
-            QCheckBox::indicator:checked {
-                background-color: rgb(90, 37, 255);
-                border: 2px solid rgb(255, 255, 255);
-            }
-        """)
-        
-        # Create Load DICOM button
-        self._load_dicom_button = QPushButton("Load DICOM File")
-        self._load_dicom_button.setMinimumSize(200, 41)
-        self._load_dicom_button.setMaximumSize(200, 41)
-        self._load_dicom_button.setStyleSheet("""
-            QPushButton {
-                background-color: rgb(90, 37, 255);
-                color: rgb(255, 255, 255);
-                border-radius: 10px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: rgb(120, 67, 255);
-            }
-            QPushButton:pressed {
-                background-color: rgb(60, 17, 195);
-            }
-        """)
-        
-        # Create transparency label
-        self._transparency_label = QLabel("Transparency:")
-        self._transparency_label.setMinimumSize(100, 41)
-        self._transparency_label.setMaximumSize(100, 41)
-        self._transparency_label.setStyleSheet("""
-            QLabel {
-                font-size: 15px;
-                color: rgb(255, 255, 255);
-                background-color: rgba(255, 255, 255, 0);
-            }
-        """)
-        self._transparency_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        
-        # Create transparency slider
-        self._transparency_slider = QSlider()
-        self._transparency_slider.setMinimumSize(200, 41)
-        self._transparency_slider.setMaximumSize(200, 41)
-        self._transparency_slider.setOrientation(Qt.Orientation.Horizontal)
-        self._transparency_slider.setMinimum(0)
-        self._transparency_slider.setMaximum(100)
-        self._transparency_slider.setValue(50)
-        self._transparency_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: 1px solid #999999;
-                height: 8px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #B1B1B1, stop:1 #c4c4c4);
-                margin: 2px 0;
-            }
-            QSlider::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
-                border: 1px solid #5c5c5c;
-                width: 18px;
-                margin: 2px 0;
-                border-radius: 3px;
-            }
-        """)
-        
-        # Create transparency value label
-        self._transparency_value_label = QLabel("50")
-        self._transparency_value_label.setMinimumSize(40, 41)
-        self._transparency_value_label.setMaximumSize(40, 41)
-        self._transparency_value_label.setStyleSheet("""
-            QLabel {
-                font-size: 15px;
-                color: rgb(255, 255, 255);
-                background-color: rgba(255, 255, 255, 0);
-            }
-        """)
-        self._transparency_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # Create layout for overlay controls (vertical layout)
-        overlay_main_layout = QVBoxLayout()
-        overlay_main_layout.setSpacing(10)
-        
-        # First row: checkbox and load button
-        overlay_button_layout = QHBoxLayout()
-        overlay_button_layout.setSpacing(10)
-        overlay_button_layout.addWidget(self._dicom_overlay_checkbox)
-        overlay_button_layout.addWidget(self._load_dicom_button)
-        
-        # Second row: transparency controls
-        overlay_transparency_layout = QHBoxLayout()
-        overlay_transparency_layout.setSpacing(10)
-        overlay_transparency_layout.addWidget(self._transparency_label)
-        overlay_transparency_layout.addWidget(self._transparency_slider)
-        overlay_transparency_layout.addWidget(self._transparency_value_label)
-        
-        # Add both layouts to main overlay layout
-        overlay_main_layout.addLayout(overlay_button_layout)
-        overlay_main_layout.addLayout(overlay_transparency_layout)
-        
-        # Insert the overlay layout into the main ROI layout
-        self._ui.draw_roi_layout.insertLayout(2, overlay_main_layout)
-        
-        # Apply visibility logic
-        if not self._image_data.dicom_available:
-            self._dicom_overlay_checkbox.hide()
-            self._transparency_slider.hide()
-            self._transparency_label.hide()
-            self._transparency_value_label.hide()
-            self._load_dicom_button.show()
-        else:
-            self._dicom_overlay_checkbox.show()
-            self._dicom_overlay_checkbox.setChecked(False)
-            self._transparency_slider.show()
-            self._transparency_slider.setValue(50)
-            self._transparency_slider.setEnabled(False)
-            self._transparency_label.show()
-            self._transparency_value_label.show()
-            self._transparency_value_label.setText("50")
-            self._load_dicom_button.hide()
 
     def _connect_signals(self) -> None:
         """Connect UI signals to internal handlers."""
@@ -574,16 +390,12 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._ui.back_from_save_button.clicked.connect(self._show_draw_type_selection)
         
         # Connect brightness slider
-        if self._brightness_slider:
-            self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
+        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
         
         # Connect DICOM overlay controls
-        if self._dicom_overlay_checkbox:
-            self._dicom_overlay_checkbox.toggled.connect(self._on_overlay_toggled)
-        if self._transparency_slider:
-            self._transparency_slider.valueChanged.connect(self._on_transparency_changed)
-        if self._load_dicom_button:
-            self._load_dicom_button.clicked.connect(self._on_load_dicom_clicked)
+        self._dicom_overlay_checkbox.toggled.connect(self._on_overlay_toggled)
+        self._transparency_slider.valueChanged.connect(self._on_transparency_changed)
+        self._load_dicom_button.clicked.connect(self._on_load_dicom_clicked)
 
     def _on_brightness_changed(self, value: int) -> None:
         """Handle brightness slider change."""
@@ -625,8 +437,21 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         )
         
         if dicom_file:
-            # Try to load the DICOM file
-            if self._image_data.load_dicom_file(dicom_file):
+            # Check if we have access to the model
+            model = None
+            if hasattr(self, '_parent_controller') and self._parent_controller:
+                if hasattr(self._parent_controller, 'model'):
+                    model = self._parent_controller.model
+
+            # Try to load the DICOM file via model if available, else fallback to DicomLoader
+            if model:
+                success = model.load_dicom_file(dicom_file)
+            else:
+                from src.qus.image_loading.dicom_loader import DicomLoader
+                dicom_pixels = DicomLoader.load_dicom_file(dicom_file)
+                success = dicom_pixels is not None
+            
+            if success:
                 # Successfully loaded - update UI
                 if self._load_dicom_button:
                     self._load_dicom_button.hide()
