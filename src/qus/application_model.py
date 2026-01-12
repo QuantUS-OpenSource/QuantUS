@@ -6,6 +6,7 @@ replacing the individual models for each component.
 """
 
 import os
+import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from PyQt6.QtCore import QThread, pyqtSignal
 
