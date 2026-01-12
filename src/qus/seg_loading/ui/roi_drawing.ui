@@ -530,6 +530,23 @@
         </layout>
        </widget>
       </item>
+      <item>
+       <widget class="QLabel" name="loading_screen_label">
+        <property name="styleSheet">
+         <string notr="true">QLabel {
+	color: rgb(0, 255, 0);
+	font-size: 20px;
+	background-color: rgba(255, 255, 255, 0);
+}</string>
+        </property>
+        <property name="text">
+         <string>LOADING....</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
     <item>
@@ -1132,22 +1149,22 @@ QSlider::handle:horizontal {
        <widget class="QPushButton" name="load_dicom_button">
         <property name="minimumSize">
          <size>
-          <width>200</width>
+          <width>241</width>
           <height>41</height>
          </size>
         </property>
         <property name="maximumSize">
          <size>
-          <width>200</width>
+          <width>241</width>
           <height>41</height>
          </size>
         </property>
         <property name="styleSheet">
          <string notr="true">QPushButton {
-	background-color: rgb(90, 37, 255);
-	color: rgb(255, 255, 255);
-	border-radius: 10px;
-	font-size: 14px;
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
 	font-weight: bold;
 }
 QPushButton:hover {

@@ -211,6 +211,15 @@ class Ui_constructRoi(object):
         self.back_button.setObjectName("back_button")
         self.backButtonGrid.addWidget(self.back_button, 1, 0, 1, 1)
         self.side_bar_layout.addWidget(self.gridFrame)
+        self.loading_screen_label = QtWidgets.QLabel(parent=self.horizontalLayoutWidget_4)
+        self.loading_screen_label.setStyleSheet("QLabel {\n"
+"    color: rgb(0, 255, 0);\n"
+"    font-size: 20px;\n"
+"    background-color: rgba(255, 255, 255, 0);\n"
+"}")
+        self.loading_screen_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.loading_screen_label.setObjectName("loading_screen_label")
+        self.side_bar_layout.addWidget(self.loading_screen_label)
         self.full_screen_layout.addLayout(self.side_bar_layout)
         self.draw_roi_layout = QtWidgets.QVBoxLayout()
         self.draw_roi_layout.setContentsMargins(30, 10, 30, 10)
@@ -495,13 +504,13 @@ class Ui_constructRoi(object):
         self.overlay_control_layout.addWidget(self.transparency_value_label)
         self.draw_roi_layout.addLayout(self.overlay_control_layout)
         self.load_dicom_button = QtWidgets.QPushButton(parent=self.horizontalLayoutWidget_4)
-        self.load_dicom_button.setMinimumSize(QtCore.QSize(200, 41))
-        self.load_dicom_button.setMaximumSize(QtCore.QSize(200, 41))
+        self.load_dicom_button.setMinimumSize(QtCore.QSize(241, 41))
+        self.load_dicom_button.setMaximumSize(QtCore.QSize(241, 41))
         self.load_dicom_button.setStyleSheet("QPushButton {\n"
-"    background-color: rgb(90, 37, 255);\n"
-"    color: rgb(255, 255, 255);\n"
-"    border-radius: 10px;\n"
-"    font-size: 14px;\n"
+"    color: white;\n"
+"    font-size: 16px;\n"
+"    background: rgb(90, 37, 255);\n"
+"    border-radius: 15px;\n"
 "    font-weight: bold;\n"
 "}\n"
 "QPushButton:hover {\n"
@@ -867,6 +876,7 @@ class Ui_constructRoi(object):
         self.exportResultsLabel.setText(_translate("constructRoi", "Visualization / Export"))
         self.analysisParamsLabel.setText(_translate("constructRoi", "Analysis Parameter Selection"))
         self.back_button.setText(_translate("constructRoi", "Back"))
+        self.loading_screen_label.setText(_translate("constructRoi", "LOADING...."))
         self.physical_dims_label.setText(_translate("constructRoi", "Physical Dims (cm):"))
         self.physical_depth_label.setText(_translate("constructRoi", "Depth:"))
         self.physical_width_val.setText(_translate("constructRoi", "0"))
@@ -905,13 +915,3 @@ class Ui_constructRoi(object):
         self.physical_roi_width_val.setText(_translate("constructRoi", "0"))
         self.physical_roi_height_label.setText(_translate("constructRoi", "Depth"))
         self.physical_roi_height_val.setText(_translate("constructRoi", "0"))
-
-
-if __name__ == "__main__":
-    import sys
-    app = QtWidgets.QApplication(sys.argv)
-    constructRoi = QtWidgets.QWidget()
-    ui = Ui_constructRoi()
-    ui.setupUi(constructRoi)
-    constructRoi.show()
-    sys.exit(app.exec())
