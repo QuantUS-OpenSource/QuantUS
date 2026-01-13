@@ -511,7 +511,6 @@ class Ui_constructRoi(object):
 "    font-size: 16px;\n"
 "    background: rgb(90, 37, 255);\n"
 "    border-radius: 15px;\n"
-"    font-weight: bold;\n"
 "}\n"
 "QPushButton:hover {\n"
 "    background-color: rgb(120, 67, 255);\n"
