@@ -1165,7 +1165,6 @@ QSlider::handle:horizontal {
 	font-size: 16px;
 	background: rgb(90, 37, 255);
 	border-radius: 15px;
-	font-weight: bold;
 }
 QPushButton:hover {
 	background-color: rgb(120, 67, 255);
