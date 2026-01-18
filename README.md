@@ -18,7 +18,7 @@ To clone this repository, run
 git clone --recurse-submodules https://github.com/QuantUS-OpenSource/QuantUS.git
 ```
 
-To set up the Python virtual environment and install dependencies to run QuantUS, run the following commands. Let `PYTHON311` be the path to your Python3.11 interpreter.
+To set up the Python virtual environment and install dependencies to run QuantUS, run the following commands. Let `PYTHON311` be the path to your Python3.11 interpreter. Note that if you are using Windows, the pyradiomics install below may fail without an additional installation (more on this below).
 
 ```shell
 cd QuantUS
@@ -41,6 +41,10 @@ source .venv/bin/activate                           # Unix
 .venv\Scripts\activate                              # Windows (cmd)
 python qus_gui.py | ceus_gui.py                     # Run QUS or CEUS GUI
 ```
+
+### Note for Windows users
+
+If you encounter an error during the pyradiomics install above, you will need to first install Microsoft C++ Build Tools, which can be found here: https://visualstudio.microsoft.com/visual-cpp-build-tools/
 
 ### Keeping your version up to date
 
