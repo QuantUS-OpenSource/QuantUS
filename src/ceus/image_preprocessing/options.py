@@ -10,7 +10,7 @@ def get_im_preproc_funcs() -> dict:
     Returns:
         dict: Dictionary of preprocessing functions.
     """
-    functions = {name: obj for name, obj in globals().items() if callable(obj) and obj.__module__ == 'src.image_preprocessing.functions'}
+    functions = {name: obj for name, obj in globals().items() if callable(obj) and obj.__module__ == 'src.ceus.image_preprocessing.functions'}
     return functions
 
 def get_required_im_preproc_kwargs(preproc_func_names: list) -> list:
