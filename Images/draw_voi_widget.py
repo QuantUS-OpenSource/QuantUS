@@ -20,7 +20,6 @@ from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
 from .spline import calculateSpline3D, calculateSpline
-from ...image_preprocessing.functions import enhance_image, denoise_ceus_wavelet
 
 def _smooth_3d_mask(mask: np.ndarray) -> np.ndarray:
     """Apply 3D smoothing to the binary mask."""
@@ -129,10 +128,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui = Ui_voi_drawer()
         self._image_data = image_data
         self._pix_data = image_data.pixel_data
-        
-        # Cache for enhanced volume
-        self._enhanced_cache = None
-        self._enhanced_cache_frame = -1
 
         # State collections
         self._drawing_widgets = []
@@ -341,11 +336,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             try:
                 fig = canvas.figure
                 if plane_ix == 0:  # Axial: y vs x
-                    aspect = (self._image_data.pixdim[0]) / (self._image_data.pixdim[1]) if self._image_data.pixdim[0] != 0 else 1
-                    aspect = aspect * 1.8
+                    aspect = (self._image_data.pixdim[1]) / (self._image_data.pixdim[0]) if self._image_data.pixdim[0] != 0 else 1
+                    aspect = aspect * 0.5
                 elif plane_ix == 1:  # Sagittal: y vs z
                     aspect = (self._image_data.pixdim[2]) / (self._image_data.pixdim[1]) if self._image_data.pixdim[2] != 0 else 1
-                    aspect = aspect * 1.0
                 elif plane_ix == 2:  # Coronal: x vs z
                     aspect = (self._image_data.pixdim[2]) / (self._image_data.pixdim[0]) if self._image_data.pixdim[2] != 0 else 1
                     aspect = aspect * 0.5
@@ -380,36 +374,13 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     def _get_plane_slice(self, plane_ix: int):
         """Return 2D numpy slice for given plane index based on current crosshair."""
         idx = self._get_plane_indices(plane_ix)
-        current_t = self._crosshair_xyzt[3]
-        
-        # Check if we need to enhance a new frame
-        if self._enhanced_cache is None or self._enhanced_cache_frame != current_t:
-            # Get the 3D volume for current time frame
-            current_frame_3d = self._pix_data[:, :, :, current_t]
-            
-            # Enhance the entire 3D volume ONCE per frame
-            self._enhanced_cache = self._enhance_slice(current_frame_3d)
-            self._enhanced_cache_frame = current_t
-        
-        # Extract the 2D slice from cached enhanced volume
-        slice_idx = list(idx[:3])  # Remove time dimension
-        arr = self._enhanced_cache[tuple(slice_idx)]
-        
+        arr = self._pix_data[idx]
         if arr.ndim != 2:
             arr = arr.squeeze()
         # Axial plane (index 0) needs transpose for correct orientation
         if plane_ix == 0:
             arr = arr.T
         return arr
-    
-    def _enhance_slice(self, slice_2d: np.ndarray) -> np.ndarray:
-        """Enhance a 2D image slice using predefined enhancement methods."""
-        enhanced = enhance_image(slice_2d, method='clahe', clip_limit=1.2)
-        enhanced = enhance_image(enhanced, method='gamma', gamma=1.5)
-        # enhanced = denoise_ceus_wavelet(enhanced, wavelet='db1')
-        # enhanced = slice_2d
-       
-        return enhanced
 
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
