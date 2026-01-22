@@ -13,14 +13,14 @@ from matplotlib.backends.backend_qtagg import FigureCanvas
 from matplotlib.path import Path as Mpl_Path
 import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame
 from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
 
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
 from .spline import calculateSpline3D, calculateSpline
-from ...image_preprocessing.functions import enhance_image, denoise_ceus_wavelet
+from ...image_preprocessing.functions import enhance_contrast_resolution, denoise_ceus_wavelet
 
 def _smooth_3d_mask(mask: np.ndarray) -> np.ndarray:
     """Apply 3D smoothing to the binary mask."""
@@ -129,6 +129,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui = Ui_voi_drawer()
         self._image_data = image_data
         self._pix_data = image_data.pixel_data
+        
+        # Enhancement parameters
+        self._clahe_clip_limit = 1.2
+        self._gamma = 1.5
         
         # Cache for enhanced volume
         self._enhanced_cache = None
@@ -312,6 +316,92 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.navigating_label.hide(); self._ui.undo_last_roi_button.hide()
         self._hide_widget_lists([self._voi_decision_widgets, 
                                  self._save_voi_widgets, self._voi_alpha_widgets])
+                                 
+        # Setup enhancement controls in sidebar
+        self._setup_enhancement_controls()
+
+    def _setup_enhancement_controls(self) -> None:
+        """Add enhancement sliders to the sidebar, styled like the existing slice slider."""
+        # Container frame for enhancement controls
+        enh_group = QFrame()
+        enh_group.setStyleSheet("background-color: rgba(255, 255, 255, 0); border: none;")
+        
+        # Main horizontal layout to put sliders "beside" each other
+        main_h_layout = QHBoxLayout(enh_group)
+        main_h_layout.setContentsMargins(0, 10, 0, 10)
+        main_h_layout.setSpacing(20)
+
+        # Helper to create a styled slider column
+        def create_enh_column(label_text, min_val, max_val, current_val, callback):
+            col_widget = QWidget()
+            col_layout = QVBoxLayout(col_widget)
+            col_layout.setContentsMargins(0, 0, 0, 0)
+            col_layout.setSpacing(5)
+            
+            # Label
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet("font-size: 14px; color: white; font-weight: bold;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            col_layout.addWidget(lbl)
+            
+            # Slider + Value Row
+            row_layout = QHBoxLayout()
+            
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(min_val, max_val)
+            slider.setValue(current_val)
+            # Copy style and size constraints from slice slider if possible
+            slider.setStyleSheet(self._ui.cur_slice_slider.styleSheet())
+            slider.setMinimumWidth(150)
+            slider.valueChanged.connect(callback)
+            
+            val_lbl = QLabel(f"{current_val/10.0:.1f}")
+            val_lbl.setMinimumWidth(40)
+            val_lbl.setStyleSheet("color: #3498db; font-weight: bold; font-size: 14px;")
+            
+            row_layout.addWidget(slider)
+            row_layout.addWidget(val_lbl)
+            col_layout.addLayout(row_layout)
+            
+            return col_widget, slider, val_lbl
+
+        # Create the 2 columns
+        clahe_col, self.clahe_slider, self.clahe_val_lbl = create_enh_column(
+            "CLAHE", 1, 100, int(self._clahe_clip_limit * 10), self._on_clahe_changed
+        )
+        gamma_col, self.gamma_slider, self.gamma_val_lbl = create_enh_column(
+            "GAMMA", 1, 40, int(self._gamma * 10), self._on_gamma_changed
+        )
+        
+        main_h_layout.addWidget(clahe_col)
+        main_h_layout.addWidget(gamma_col)
+        
+        # Add to the layout below the current slice slider
+        self._ui.verticalLayout_2.addWidget(enh_group)
+
+    def _on_clahe_changed(self, value: int) -> None:
+        """Handle CLAHE clip limit change."""
+        self._clahe_clip_limit = value / 10.0
+        if hasattr(self, 'clahe_val_lbl'):
+            self.clahe_val_lbl.setText(f"{self._clahe_clip_limit:.1f}")
+        self._invalidate_enhancement_cache()
+
+    def _on_gamma_changed(self, value: int) -> None:
+        """Handle gamma change."""
+        self._gamma = value / 10.0
+        if hasattr(self, 'gamma_val_lbl'):
+            self.gamma_val_lbl.setText(f"{self._gamma:.1f}")
+        self._invalidate_enhancement_cache()
+        
+    def _reset_enhancement(self, _=None) -> None:
+        """Reset enhancement parameters to defaults."""
+        self.clahe_slider.setValue(12)  # 1.2
+        self.gamma_slider.setValue(15)  # 1.5
+        
+    def _invalidate_enhancement_cache(self) -> None:
+        """Invalidate the cache and trigger a refresh of all planes."""
+        self._enhanced_cache = None
+        self._refresh_frames()
 
     def _setup_matplotlib_canvases(self):
         """Setup matplotlib canvases for high-performance plane display."""
@@ -404,8 +494,9 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     
     def _enhance_slice(self, slice_2d: np.ndarray) -> np.ndarray:
         """Enhance a 2D image slice using predefined enhancement methods."""
-        enhanced = enhance_image(slice_2d, method='clahe', clip_limit=1.2)
-        enhanced = enhance_image(enhanced, method='gamma', gamma=1.5)
+        # Enhance Contrast Resolution
+        enhanced = enhance_contrast_resolution(slice_2d, method='clahe', clip_limit=self._clahe_clip_limit)
+        enhanced = enhance_contrast_resolution(enhanced, method='gamma', gamma=self._gamma)
         # enhanced = denoise_ceus_wavelet(enhanced, wavelet='db1')
         # enhanced = slice_2d
        
