@@ -11,9 +11,10 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 from matplotlib.backends.backend_qtagg import FigureCanvas
 from matplotlib.path import Path as Mpl_Path
+from matplotlib.colors import LinearSegmentedColormap
 import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox
 from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
 
 from ...mvc.base_view import BaseViewMixin
@@ -21,6 +22,15 @@ from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
 from .spline import calculateSpline3D, calculateSpline
 from ...image_preprocessing.functions import enhance_contrast_resolution, denoise_ceus_wavelet
+
+# Philips CEUS Colormap: Grayscale -> Red -> Yellow
+philips_colors = [
+    (0.0, 0.0, 0.0),    # 0% - Black
+    (0.4, 0.4, 0.4),    # 40% - Gray
+    (0.8, 0.0, 0.0),    # 80% - Red
+    (1.0, 1.0, 0.0)     # 100% - Yellow
+]
+philips_cmap = LinearSegmentedColormap.from_list("philips_ceus", philips_colors)
 
 def _smooth_3d_mask(mask: np.ndarray) -> np.ndarray:
     """Apply 3D smoothing to the binary mask."""
@@ -133,6 +143,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Enhancement parameters
         self._clahe_clip_limit = 1.2
         self._gamma = 1.5
+        self._use_philips_ceus = False
         
         # Cache for enhanced volume
         self._enhanced_cache = None
@@ -375,9 +386,30 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         
         main_h_layout.addWidget(clahe_col)
         main_h_layout.addWidget(gamma_col)
+
+        # Philips CEUS Toggle
+        self.philips_check = QCheckBox("Pseudocoloring")
+        self.philips_check.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
+        self.philips_check.setToolTip("Philips CEUS Style:\n"
+                                     "Black → Low Intensity\n"
+                                     "Gray → Tissue Background\n"
+                                     "Red → Medium Enhancement\n"
+                                     "Yellow → Peak Enhancement")
+        self.philips_check.stateChanged.connect(self._on_philips_toggled)
+        main_h_layout.addWidget(self.philips_check)
         
         # Add to the layout below the current slice slider
         self._ui.verticalLayout_2.addWidget(enh_group)
+
+    def _on_philips_toggled(self, state: int) -> None:
+        """Handle Philips CEUS pseudocolor toggle."""
+        self._use_philips_ceus = state == Qt.CheckState.Checked.value
+        # Update colormap on all artists
+        new_cmap = philips_cmap if self._use_philips_ceus else 'gray'
+        for artist in self._ax_sag_cor_plane_artists:
+            if artist:
+                artist.set_cmap(new_cmap)
+        self._refresh_frames()
 
     def _on_clahe_changed(self, value: int) -> None:
         """Handle CLAHE clip limit change."""
@@ -449,7 +481,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 slice_arr = self._get_plane_slice(plane_ix)
                 mask_arr = self._get_mask_slice(plane_ix)
 
-                artist = ax.imshow(slice_arr, cmap='gray', aspect=float(aspect), zorder=1, animated=True) # add vmin and vmax for the 0 - 255 show
+                current_cmap = philips_cmap if self._use_philips_ceus else 'gray'
+                artist = ax.imshow(slice_arr, cmap=current_cmap, aspect=float(aspect), zorder=1, animated=True) # add vmin and vmax for the 0 - 255 show
                 v_line = ax.axvline(x=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 h_line = ax.axhline(y=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 seg_mask = ax.imshow(mask_arr, zorder=8, aspect=float(aspect), animated=True)
