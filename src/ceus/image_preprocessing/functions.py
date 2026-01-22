@@ -1,10 +1,10 @@
 import numpy as np
 from skimage import exposure, filters
-from skimage.restoration import denoise_wavelet
+from skimage.restoration import denoise_wavelet, estimate_sigma
 import cv2
 
 from .decorators import required_kwargs
-from ..data_objs.image import UltrasoundImage
+from engines.ceus.src.data_objs.image import UltrasoundImage
 from .transforms import resample_to_spacing_2d, resample_to_spacing_3d
 
 @required_kwargs('arr_to_standardize')
@@ -62,69 +62,144 @@ def resample(image_data: UltrasoundImage, **kwargs) -> UltrasoundImage:
 
     return image_data
 
-def enhance_image(volume, method='clahe', **kwargs):
+@required_kwargs('scale_factor', 'interp')
+def enhance_spatial_resolution(volume, scale_factor=1.0, interp='cubic', **kwargs):
     """
-    Enhance image quality using various methods
+    Enhance spatial resolution by upsampling the image (increasing pixel count).
     
     Args:
-        volume: 3D volume (Z, Y, X)
+        volume: 2D or 3D array, or UltrasoundImage object
+        scale_factor: Multiplier for the current resolution (e.g., 2.0 to double pixels)
+        interp: Interpolation method ('nearest', 'linear', 'cubic')
+    """
+    if scale_factor == 1.0:
+        return volume
+
+    if isinstance(volume, UltrasoundImage):
+        image_data = volume
+        # Adjust spacing inversely to scale factor
+        target_vox_size = tuple(np.array(image_data.pixdim) / scale_factor)
+        image_data = resample(image_data, target_vox_size=target_vox_size, interp=interp)
+        return image_data
+
+    # For raw arrays (2D or 3D)
+    if volume.ndim == 2:
+        orig_spacing = (1.0, 1.0)
+        target_spacing = (1.0 / scale_factor, 1.0 / scale_factor)
+        return resample_to_spacing_2d(volume, orig_spacing, target_spacing, interp=interp)
+    else:
+        orig_spacing = (1.0, 1.0, 1.0)
+        target_spacing = (1.0 / scale_factor, 1.0 / scale_factor, 1.0 / scale_factor)
+        return resample_to_spacing_3d(volume, orig_spacing, target_spacing, interp=interp)
+
+@required_kwargs('method')
+def enhance_contrast_resolution(volume, method='clahe', **kwargs):
+    """
+    Enhance contrast resolution using various intensity transformation methods. 
+    Supports both 2D and 3D inputs and works as a plugin.
+    
+    Args:
+        volume: 2D or 3D array, or UltrasoundImage object
         method: Enhancement method ('clahe', 'gamma', 'log', 'sigmoid', 'adaptive_hist')
     """
-    
-    enhanced = np.zeros_like(volume)
+    # Plugin support
+    if isinstance(volume, UltrasoundImage):
+        image_data = volume
+        image_data.pixel_data = enhance_contrast_resolution(image_data.pixel_data, method=method, **kwargs)
+        return image_data
+
+    # Method validation and execution
     if method == 'gamma':
-        # Gamma correction
         gamma = kwargs.get('gamma', 0.7)
-        enhanced = exposure.adjust_gamma(volume, gamma)
+        return exposure.adjust_gamma(volume, gamma)
+    elif method == 'log':
+        gain = kwargs.get('gain', 1)
+        return exposure.adjust_log(volume, gain=gain)
     elif method == 'adaptive_hist':
-        clip_limit = kwargs.get('clip_limit', 0.05)
-        enhanced = exposure.equalize_adapthist(volume, clip_limit=clip_limit)
+        clip_limit = kwargs.get('clip_limit', 0.01)
+        return exposure.equalize_adapthist(volume, clip_limit=clip_limit)
+    elif method == 'sigmoid':
+        cutoff = kwargs.get('cutoff', 0.5)
+        gain = kwargs.get('gain', 10)
+        return exposure.adjust_sigmoid(volume, cutoff=cutoff, gain=gain)
 
-    for z in range(volume.shape[2]):
-        slice_2d = volume[:, :, z]
+    # Slice-based methods (e.g., OpenCV CLAHE)
+    if method == 'clahe':
+        is_2d = volume.ndim == 2
+        if is_2d:
+            volume = volume[:, :, np.newaxis]
             
-        if method == 'clahe':
-            # Contrast Limited Adaptive Histogram Equalization
-            clahe = cv2.createCLAHE(clipLimit=kwargs.get('clip_limit',3.0), tileGridSize=(8,8))
-            enhanced[:,:,z] = clahe.apply(slice_2d)
+        enhanced = np.zeros_like(volume)
+        clahe = cv2.createCLAHE(clipLimit=kwargs.get('clip_limit', 3.0), tileGridSize=kwargs.get('tile_grid_size', (8, 8)))
+        
+        for z in range(volume.shape[2]):
+            slice_2d = volume[:, :, z]
+            # OpenCV requires uint8 or uint16
+            if slice_2d.dtype not in [np.uint8, np.uint16]:
+                s_min, s_max = slice_2d.min(), slice_2d.max()
+                if s_max > s_min:
+                    slice_to_proc = ((slice_2d - s_min) / (s_max - s_min) * 255).astype(np.uint8)
+                else:
+                    slice_to_proc = slice_2d.astype(np.uint8)
+            else:
+                slice_to_proc = slice_2d
+                
+            enhanced[:, :, z] = clahe.apply(slice_to_proc)
             
-        elif method == 'sigmoid':
-            # Sigmoid transformation
-            cutoff = kwargs.get('cutoff', 0.5)
-            gain = kwargs.get('gain', 10)
-            enhanced[:,:,z] = exposure.adjust_sigmoid(slice_2d, cutoff=cutoff, gain=gain)      
-    return enhanced
+        return enhanced[:, :, 0] if is_2d else enhanced
 
+    return volume
+
+def enhance_image(volume, method='clahe', **kwargs):
+    """Alias for backward compatibility."""
+    return enhance_contrast_resolution(volume, method, **kwargs)
+
+@required_kwargs('wavelet', 'sigma_scale')
 def denoise_ceus_wavelet(volume_3d, wavelet='db1', sigma_scale=0.8):
     """
-    Gentler wavelet denoising
+    Gentler wavelet denoising. Supports both 2D and 3D inputs and works as a plugin.
     
     Args:
+        volume_3d: 2D or 3D array, or UltrasoundImage object
         sigma_scale: Scale factor for noise estimate (0.3-0.7 for gentle, 1.0 for normal)
     """
+    if isinstance(volume_3d, UltrasoundImage):
+        image_data = volume_3d
+        image_data.pixel_data = denoise_ceus_wavelet(image_data.pixel_data, wavelet=wavelet, sigma_scale=sigma_scale)
+        return image_data
+
+    is_2d = volume_3d.ndim == 2
+    if is_2d:
+        volume_3d = volume_3d[:, :, np.newaxis]
+
     denoised = np.zeros_like(volume_3d, dtype=np.float32)
     
     for z in range(volume_3d.shape[2]):
         slice_2d = volume_3d[:, :, z].astype(np.float32)
         
-        # Normalize to [0, 1]
-        slice_norm = (slice_2d - slice_2d.min()) / (slice_2d.max() - slice_2d.min() + 1e-8)
+        # Normalize to [0, 1] for stable denoising
+        slice_min, slice_max = slice_2d.min(), slice_2d.max()
+        range_val = slice_max - slice_min
+        if range_val > 0:
+            slice_norm = (slice_2d - slice_min) / range_val
+        else:
+            slice_norm = slice_2d
         
-        # Estimate sigma and scale it down
-        from skimage.restoration import estimate_sigma
+        # Estimate sigma and apply wavelet denoising
         sigma_est = estimate_sigma(slice_norm, average_sigmas=True)
-        
-        # Apply wavelet denoising with reduced sigma
         denoised_slice = denoise_wavelet(
             slice_norm,
             method='BayesShrink',
             mode='soft',
             wavelet=wavelet,
             rescale_sigma=True,
-            sigma=sigma_est * sigma_scale  # KEY: Reduce denoising strength
+            sigma=sigma_est * sigma_scale
         )
         
-        # Scale back
-        denoised[:, :, z] = denoised_slice * (slice_2d.max() - slice_2d.min()) + slice_2d.min()
+        # Scale back to original range
+        if range_val > 0:
+            denoised[:, :, z] = denoised_slice * range_val + slice_min
+        else:
+            denoised[:, :, z] = denoised_slice
     
-    return denoised
+    return denoised[:, :, 0] if is_2d else denoised
