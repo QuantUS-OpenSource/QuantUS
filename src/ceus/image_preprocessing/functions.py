@@ -129,6 +129,10 @@ def enhance_contrast_resolution(volume, method='clahe', **kwargs):
         if is_2d:
             volume = volume[:, :, np.newaxis]
             
+        # Get global min/max for stable normalization across slices in 3D
+        v_min, v_max = volume.min(), volume.max()
+        v_range = v_max - v_min
+
         enhanced = np.zeros_like(volume)
         clahe = cv2.createCLAHE(clipLimit=kwargs.get('clip_limit', 3.0), tileGridSize=kwargs.get('tile_grid_size', (8, 8)))
         
@@ -136,9 +140,8 @@ def enhance_contrast_resolution(volume, method='clahe', **kwargs):
             slice_2d = volume[:, :, z]
             # OpenCV requires uint8 or uint16
             if slice_2d.dtype not in [np.uint8, np.uint16]:
-                s_min, s_max = slice_2d.min(), slice_2d.max()
-                if s_max > s_min:
-                    slice_to_proc = ((slice_2d - s_min) / (s_max - s_min) * 255).astype(np.uint8)
+                if v_range > 0:
+                    slice_to_proc = ((slice_2d - v_min) / v_range * 255).astype(np.uint8)
                 else:
                     slice_to_proc = slice_2d.astype(np.uint8)
             else:
@@ -172,16 +175,18 @@ def denoise_ceus_wavelet(volume_3d, wavelet='db1', sigma_scale=0.8):
     if is_2d:
         volume_3d = volume_3d[:, :, np.newaxis]
 
+    # Get global range for stable 3D denoising
+    v_min, v_max = volume_3d.min(), volume_3d.max()
+    v_range = v_max - v_min
+
     denoised = np.zeros_like(volume_3d, dtype=np.float32)
     
     for z in range(volume_3d.shape[2]):
         slice_2d = volume_3d[:, :, z].astype(np.float32)
         
-        # Normalize to [0, 1] for stable denoising
-        slice_min, slice_max = slice_2d.min(), slice_2d.max()
-        range_val = slice_max - slice_min
-        if range_val > 0:
-            slice_norm = (slice_2d - slice_min) / range_val
+        # Normalize to [0, 1] using global volume range
+        if v_range > 0:
+            slice_norm = (slice_2d - v_min) / v_range
         else:
             slice_norm = slice_2d
         
@@ -197,8 +202,8 @@ def denoise_ceus_wavelet(volume_3d, wavelet='db1', sigma_scale=0.8):
         )
         
         # Scale back to original range
-        if range_val > 0:
-            denoised[:, :, z] = denoised_slice * range_val + slice_min
+        if v_range > 0:
+            denoised[:, :, z] = denoised_slice * v_range + v_min
         else:
             denoised[:, :, z] = denoised_slice
     
