@@ -478,7 +478,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             current_frame_3d = self._pix_data[:, :, :, current_t]
             
             # Enhance the entire 3D volume ONCE per frame
-            self._enhanced_cache = self._enhance_slice(current_frame_3d)
+            self._enhanced_cache = self._enhance_volume(current_frame_3d)
             self._enhanced_cache_frame = current_t
         
         # Extract the 2D slice from cached enhanced volume
@@ -492,13 +492,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             arr = arr.T
         return arr
     
-    def _enhance_slice(self, slice_2d: np.ndarray) -> np.ndarray:
-        """Enhance a 2D image slice using predefined enhancement methods."""
+    def _enhance_volume(self, volume_3d: np.ndarray) -> np.ndarray:
+        """Enhance a 3D image volume using predefined enhancement methods."""
         # Enhance Contrast Resolution
-        enhanced = enhance_contrast_resolution(slice_2d, method='clahe', clip_limit=self._clahe_clip_limit)
+        enhanced = enhance_contrast_resolution(volume_3d, method='clahe', clip_limit=self._clahe_clip_limit)
         enhanced = enhance_contrast_resolution(enhanced, method='gamma', gamma=self._gamma)
         # enhanced = denoise_ceus_wavelet(enhanced, wavelet='db1')
-        # enhanced = slice_2d
        
         return enhanced
 
