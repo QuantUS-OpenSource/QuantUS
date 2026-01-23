@@ -462,6 +462,17 @@ class ApplicationModel(BaseModel):
             hasattr(image_data, 'bmode') and image_data.bmode is not None):
             
             self._image_data = image_data
+
+            # Print NIfTI information if applicable
+            scan_path = getattr(image_data, 'scan_path', '')
+            if scan_path and scan_path.lower().endswith(('.nii', '.nii.gz')):
+                print(f"\n--- NIfTI Image Loaded (QuantUS GUI) ---")
+                print(f"Path: {scan_path}")
+                print(f"B-mode Shape: {getattr(image_data.bmode, 'shape', 'Unknown')}")
+                print(f"RF Data Shape: {getattr(image_data.rf_data, 'shape', 'Unknown')}")
+                print(f"Spatial Dimensions: {getattr(image_data, 'spatial_dims', 'Unknown')}")
+                print(f"----------------------------------------\n")
+
             self.image_loaded.emit(image_data)
         else:
             print(f"DEBUG: Image loading failed - invalid image data:")
@@ -608,6 +619,17 @@ class ApplicationModel(BaseModel):
         # Check if loading was successful
         if seg_data and hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None:
             self._seg_data = seg_data
+
+            # Print NIfTI information if applicable
+            seg_path = getattr(self._seg_worker, 'seg_path', '')
+            if seg_path and seg_path.lower().endswith(('.nii', '.nii.gz')):
+                print(f"\n--- NIfTI Segmentation Loaded (QuantUS GUI) ---")
+                print(f"Path: {seg_path}")
+                print(f"RF-Space Mask Shape: {getattr(seg_data.seg_mask, 'shape', 'Unknown')}")
+                if hasattr(seg_data, 'sc_seg_mask') and seg_data.sc_seg_mask is not None:
+                    print(f"Scan-Converted Mask Shape: {seg_data.sc_seg_mask.shape}")
+                print(f"-----------------------------------------------\n")
+
             self.segmentation_loaded.emit(seg_data)
         else:
             print(f"DEBUG: Segmentation loading failed - invalid seg data")

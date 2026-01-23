@@ -294,6 +294,17 @@ class ApplicationModel(BaseModel):
         # Check if loading was successful
         if isinstance(image_data, UltrasoundImage):
             self._image_data = image_data
+            
+            # Print NIfTI information if applicable
+            scan_path = getattr(image_data, 'scan_path', '')
+            if scan_path and scan_path.lower().endswith(('.nii', '.nii.gz')):
+                print(f"\n--- NIfTI Image Loaded (QuantUS GUI) ---")
+                print(f"Path: {scan_path}")
+                print(f"Shape: {getattr(image_data.pixel_data, 'shape', 'Unknown')}")
+                print(f"Pixel Dimensions: {getattr(image_data, 'pixdim', 'Unknown')}")
+                print(f"Frame Rate: {getattr(image_data, 'frame_rate', 'Unknown')}")
+                print(f"----------------------------------------\n")
+            
             self.image_loaded.emit(image_data)
         else:
             print(f"DEBUG: Image loading failed - invalid image data:")
@@ -434,6 +445,16 @@ class ApplicationModel(BaseModel):
         # Check if loading was successful
         if seg_data and hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None:
             self._seg_data = seg_data
+            
+            # Print NIfTI information if applicable
+            seg_path = getattr(self._seg_worker, 'seg_path', '')
+            if seg_path and seg_path.lower().endswith(('.nii', '.nii.gz')):
+                print(f"\n--- NIfTI Segmentation Loaded (QuantUS GUI) ---")
+                print(f"Path: {seg_path}")
+                print(f"Shape: {getattr(seg_data.seg_mask, 'shape', 'Unknown')}")
+                print(f"Pixel Dimensions: {getattr(seg_data, 'pixdim', 'Unknown')}")
+                print(f"-----------------------------------------------\n")
+                
             self.segmentation_loaded.emit(seg_data)
         else:
             print(f"DEBUG: Segmentation loading failed - invalid seg data")
