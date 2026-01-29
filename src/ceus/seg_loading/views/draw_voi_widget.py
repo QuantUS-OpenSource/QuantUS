@@ -143,7 +143,9 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Enhancement parameters
         self._clahe_clip_limit = 1.2
         self._gamma = 1.5
-        self._width_scale = 1.0
+        self._width_scale_axial = 1.0
+        self._width_scale_sagittal = 1.0
+        self._width_scale_coronal = 1.0
         self._use_philips_ceus = False
         
         # Cache for enhanced volume
@@ -370,7 +372,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             slider.setValue(current_val)
             # Copy style and size constraints from slice slider if possible
             slider.setStyleSheet(self._ui.cur_slice_slider.styleSheet())
-            slider.setMinimumWidth(150)
+            slider.setMinimumWidth(100)
+            slider.setMaximumWidth(120)
             slider.valueChanged.connect(callback)
             
             val_lbl = QLabel(f"{current_val/10.0:.1f}")
@@ -390,15 +393,20 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         gamma_col, self.gamma_slider, self.gamma_val_lbl = create_enh_column(
             "GAMMA", 1, 40, int(self._gamma * 10), self._on_gamma_changed
         )
-        width_col, self.width_slider, self.width_val_lbl = create_enh_column(
-            "WIDTH", 1, 50, int(self._width_scale * 10), self._on_width_changed
+        width_ax_col, self.width_ax_slider, self.width_ax_val_lbl = create_enh_column(
+            "WIDTH (AX)", 1, 50, int(self._width_scale_axial * 10), self._on_width_axial_changed
+        )
+        width_sag_col, self.width_sag_slider, self.width_sag_val_lbl = create_enh_column(
+            "WIDTH (SAG)", 1, 50, int(self._width_scale_sagittal * 10), self._on_width_sagittal_changed
+        )
+        width_cor_col, self.width_cor_slider, self.width_cor_val_lbl = create_enh_column(
+            "WIDTH (COR)", 1, 50, int(self._width_scale_coronal * 10), self._on_width_coronal_changed
         )
         
         row1_layout.addWidget(clahe_col)
         row1_layout.addWidget(gamma_col)
-        row2_layout.addWidget(width_col)
-
-        # Philips CEUS Toggle
+        
+        # Philips CEUS Toggle (Pseudocoloring) - now in row 1
         self.philips_check = QCheckBox("Pseudocoloring")
         self.philips_check.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
         self.philips_check.setToolTip("Philips CEUS Style:\n"
@@ -407,7 +415,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                                      "Red → Medium Enhancement\n"
                                      "Yellow → Peak Enhancement")
         self.philips_check.stateChanged.connect(self._on_philips_toggled)
-        row2_layout.addWidget(self.philips_check)
+        row1_layout.addWidget(self.philips_check)
+
+        row2_layout.addWidget(width_ax_col)
+        row2_layout.addWidget(width_sag_col)
+        row2_layout.addWidget(width_cor_col)
         
         container_layout.addLayout(row1_layout)
         container_layout.addLayout(row2_layout)
@@ -439,16 +451,32 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self.gamma_val_lbl.setText(f"{self._gamma:.1f}")
         self._invalidate_enhancement_cache()
 
-    def _on_width_changed(self, value: int) -> None:
-        """Handle width scale change."""
-        self._width_scale = value / 10.0
-        if hasattr(self, 'width_val_lbl'):
-            self.width_val_lbl.setText(f"{self._width_scale:.1f}")
+    def _on_width_axial_changed(self, value: int) -> None:
+        """Handle axial width scale change."""
+        self._width_scale_axial = value / 10.0
+        if hasattr(self, 'width_ax_val_lbl'):
+            self.width_ax_val_lbl.setText(f"{self._width_scale_axial:.1f}")
+        self._update_aspect_ratios()
+        self._refresh_frames()
+
+    def _on_width_sagittal_changed(self, value: int) -> None:
+        """Handle sagittal width scale change."""
+        self._width_scale_sagittal = value / 10.0
+        if hasattr(self, 'width_sag_val_lbl'):
+            self.width_sag_val_lbl.setText(f"{self._width_scale_sagittal:.1f}")
+        self._update_aspect_ratios()
+        self._refresh_frames()
+
+    def _on_width_coronal_changed(self, value: int) -> None:
+        """Handle coronal width scale change."""
+        self._width_scale_coronal = value / 10.0
+        if hasattr(self, 'width_cor_val_lbl'):
+            self.width_cor_val_lbl.setText(f"{self._width_scale_coronal:.1f}")
         self._update_aspect_ratios()
         self._refresh_frames()
 
     def _update_aspect_ratios(self) -> None:
-        """Update the aspect ratios of the axes based on the current width scale."""
+        """Update the aspect ratios of the axes based on the plane-specific width scales."""
         if not hasattr(self, '_image_data') or self._image_data is None:
             return
             
@@ -457,19 +485,19 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             # Index 0: Axial (Plane 0)
             if self._ax_sag_cor_matplotlib_canvases[0]:
                 dx, dy = pix[0], pix[1]
-                aspect = (dy / dx if dx != 0 else 1.0) * self._width_scale
+                aspect = (dy / dx if dx != 0 else 1.0) * self._width_scale_axial
                 self._ax_sag_cor_matplotlib_canvases[0].figure.gca().set_aspect(aspect)
             
             # Index 1: Sagittal (Plane 1) 
             if self._ax_sag_cor_matplotlib_canvases[1]:
                 dy, dz = pix[1], pix[2]
-                aspect = (dy / dz if dz != 0 else 1.0) * self._width_scale
+                aspect = (dy / dz if dz != 0 else 1.0) * self._width_scale_sagittal
                 self._ax_sag_cor_matplotlib_canvases[1].figure.gca().set_aspect(aspect)
                 
             # Index 2: Coronal (Plane 2)
             if self._ax_sag_cor_matplotlib_canvases[2]:
                 dx, dz = pix[0], pix[2]
-                aspect = (dx / dz if dz != 0 else 1.0) * self._width_scale
+                aspect = (dx / dz if dz != 0 else 1.0) * self._width_scale_coronal
                 self._ax_sag_cor_matplotlib_canvases[2].figure.gca().set_aspect(aspect)
                 
             for canvas in self._ax_sag_cor_matplotlib_canvases:
@@ -482,7 +510,9 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         """Reset enhancement parameters to defaults."""
         self.clahe_slider.setValue(12)  # 1.2
         self.gamma_slider.setValue(15)  # 1.5
-        self.width_slider.setValue(10)  # 1.0
+        self.width_ax_slider.setValue(10)   # 1.0
+        self.width_sag_slider.setValue(10)  # 1.0
+        self.width_cor_slider.setValue(10)  # 1.0
         
     def _invalidate_enhancement_cache(self) -> None:
         """Invalidate the cache and trigger a refresh of all planes."""
@@ -516,25 +546,23 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 continue
             try:
                 fig = canvas.figure
-                if plane_ix == 0:  # Axial: dim 1 (Coronal/Y) vs dim 0 (Sagittal/X)
-                    # Rows = dim 1, Cols = dim 0 because of .T in _get_plane_slice(0)
+                if plane_ix == 0:  # Axial
                     dy = self._image_data.pixdim[1]
                     dx = self._image_data.pixdim[0]
                     base_aspect = dy / dx if dx != 0 else 1
-                elif plane_ix == 1:  # Sagittal: dim 1 (Coronal/Y) vs dim 2 (Axial/Z)
-                    # Rows = dim 1, Cols = dim 2
+                    aspect = base_aspect * self._width_scale_axial
+                elif plane_ix == 1:  # Sagittal
                     dy = self._image_data.pixdim[1]
                     dz = self._image_data.pixdim[2]
                     base_aspect = dy / dz if dz != 0 else 1
-                elif plane_ix == 2:  # Coronal: dim 0 (Sagittal/X) vs dim 2 (Axial/Z)
-                    # Rows = dim 0, Cols = dim 2
+                    aspect = base_aspect * self._width_scale_sagittal
+                elif plane_ix == 2:  # Coronal
                     dx = self._image_data.pixdim[0]
                     dz = self._image_data.pixdim[2]
                     base_aspect = dx / dz if dz != 0 else 1
+                    aspect = base_aspect * self._width_scale_coronal
                 else:
                     self.show_error(f"Invalid plane index: {plane_ix}")
-                
-                aspect = base_aspect * self._width_scale
                 fig.clear()
                 ax = fig.add_subplot(111)
                 ax.axis('off')
