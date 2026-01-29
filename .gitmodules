@@ -6,3 +6,9 @@
 	path = engines/qus
 	url = https://github.com/QuantUS-OpenSource/QuantUS-Backend-QUS
 	branch = main
+[submodule "Internal-TUL"]
+	path = engines/Internal-TUL
+	url = https://github.com/TUL-Dev/Internal-TUL.git
+[submodule "engines/Internal-TUL"]
+	path = engines/Internal-TUL
+	url = https://github.com/TUL-Dev/Internal-TUL.git
