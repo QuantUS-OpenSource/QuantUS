@@ -129,7 +129,23 @@ class SegmentationLoadingController(BaseController):
             BmodeSeg: The loaded segmentation data, or None if no segmentation loaded
         """
         return self.model.seg_data
+    
+    def load_dicom_file(self, dicom_file_path: str) -> bool:
+        """
+        Load a DICOM file using the DicomLoader utility.
         
+        Args:
+            dicom_file_path (str): Path to the DICOM file to load
+            
+        Returns:
+            bool: True if the DICOM file was loaded successfully, False otherwise
+        """
+        return self.model.load_dicom_file(dicom_file_path)
+    
+    def get_dicom_data(self) -> dict:
+        """Get processed DICOM data from the model."""
+        return self.model.get_dicom_data()
+    
     def cleanup(self) -> None:
         """Clean up resources."""
         self.model.cleanup()
