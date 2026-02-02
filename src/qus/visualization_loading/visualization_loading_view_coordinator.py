@@ -17,7 +17,6 @@ from ..mvc.base_view import BaseViewMixin
 from .views.visualization_function_selection_widget import VisualizationFunctionSelectionWidget
 from .views.visualization_preview_2d_widget import VisualizationPreview2DWidget
 
-
 class VisualizationLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
     """
     Coordinator for visualization loading widgets.
@@ -50,7 +49,6 @@ class VisualizationLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         # Widget instances
         self._visualization_function_widget: Optional[VisualizationFunctionSelectionWidget] = None
         self._visualization_preview_widget: Optional[VisualizationPreview2DWidget] = None
-
         # Note: Visualization type selection is now skipped - Paramap is automatically selected
         # The controller will call show_function_selection directly
     
@@ -106,14 +104,14 @@ class VisualizationLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self.setCurrentWidget(self._visualization_function_widget)
         self._visualization_function_widget.clear_error()
 
-    def show_visualization_previews(self, visualization_folder: str) -> None:
+    def show_visualization_previews(self, visualization_folder: str, summary_data=None) -> None:
         """
         Show the visualization previews widget.
         Args:
             visualization_folder: Folder where visualization results are stored
         """
         if self._visualization_preview_widget is None:
-            self._visualization_preview_widget = VisualizationPreview2DWidget(self._image_data)
+            self._visualization_preview_widget = VisualizationPreview2DWidget(self._image_data, summary_data)
             self._visualization_preview_widget.back_requested.connect(self._on_visualization_preview_back)
             self.addWidget(self._visualization_preview_widget)
 

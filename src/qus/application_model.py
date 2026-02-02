@@ -7,6 +7,7 @@ replacing the individual models for each component.
 
 import os
 from typing import Dict, Any, Optional, Tuple
+import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from src.qus.mvc.base_model import BaseModel
@@ -1011,3 +1012,31 @@ class ApplicationModel(BaseModel):
             self._analysis_worker.quit()
             self._analysis_worker.wait()
             self._analysis_worker = None
+
+    def get_numerical_summary(self) -> Dict[str, float]:
+        """Get numerical values to display in visualization screen."""
+        if not self._analysis_data:
+            return {}
+        
+        summary = {}
+
+        if hasattr(self._analysis_data.windows[0].results, 'ss'):
+            ss_arr = [window.results.ss for window in self._analysis_data.windows]
+            summary["Av. SS (1e-6)"] = np.mean(np.array(ss_arr))
+        
+        if hasattr(self._analysis_data.windows[0].results, 'si'):
+            si_arr = [window.results.si for window in self._analysis_data.windows]
+            summary["Av. SI"] = np.mean(np.array(si_arr))
+
+        if hasattr(self._analysis_data.windows[0].results, 'mbf'):
+            mbf_arr = [window.results.mbf for window in self._analysis_data.windows]
+            summary["Av. MBF"] = np.mean(np.array(mbf_arr))
+
+        if hasattr(self._analysis_data.single_window.results, 'bsc'):
+            summary["BSC"] = self._analysis_data.single_window.results.bsc
+
+        if hasattr(self._analysis_data.single_window.results, 'att_coef'):
+            summary["Att. Coef"] = self._analysis_data.single_window.results.att_coef
+        
+        return summary
+

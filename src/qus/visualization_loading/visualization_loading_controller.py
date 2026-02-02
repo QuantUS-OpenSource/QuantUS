@@ -120,4 +120,6 @@ class VisualizationLoadingController(QObject):
             **self._visualization_kwargs
         )
         
-        self._view_coordinator.show_visualization_previews(self._visualization_folder)
+        summary_data = self._model.get_numerical_summary()
+
+        self._view_coordinator.show_visualization_previews(self._visualization_folder, summary_data)

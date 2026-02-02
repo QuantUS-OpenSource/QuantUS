@@ -27,13 +27,13 @@ class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
     close_requested = pyqtSignal()
     back_requested = pyqtSignal()
 
-    def __init__(self, image_data: UltrasoundRfImage, parent: Optional[QWidget] = None):
+    def __init__(self, image_data: UltrasoundRfImage, numerical_data: Dict[str, float], parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
         self._ui = Ui_visualization_preview_2d()
         self._image_data = image_data
         self._visualization_folder: Optional[Path] = None
-
+        self.numerical_data = numerical_data
         # Setup UI
         self._setup_ui()
         self._connect_signals()
@@ -91,6 +91,25 @@ class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
             self._matplotlib_canvas.draw()
             return
         
+        items = list(self.numerical_data.items())
+        lines = []
+        for i in range(0, len(items), 2):
+            line = "    ".join(f"{k}: {v:.2f}" for k, v in items[i:i+2])
+            lines.append(line)
+
+        summary_text = "\n".join(lines)
+
+        ax_summary = fig.add_axes([0, 0.85, 1, 0.15])
+        ax_summary.text(
+            0.5, 0.5, summary_text,
+            ha='center', va='center',
+            fontsize=10,
+            wrap=True,
+            color='white',
+            bbox=dict(facecolor='black', alpha=0.5, pad=6)
+        )
+        ax_summary.axis('off')
+
         if text.endswith("_paramap"):
             legend_path = self._visualization_folder / f"{text[:-len('_paramap')]}_legend.png"
             legend_im = plt.imread(legend_path)
