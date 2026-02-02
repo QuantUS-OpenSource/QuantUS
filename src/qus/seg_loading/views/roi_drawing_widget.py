@@ -12,6 +12,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import scipy.interpolate as interpolate
 
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, QCheckBox, QPushButton
 
 from src.qus.mvc.base_view import BaseViewMixin
@@ -52,6 +53,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._drawing = False  # Flag to track if drawing is in progress
         self._frame = frame  # Frame number for multi-frame images
         self._displayed_im: np.ndarray = None  # Placeholder for the image to be displayed
+        self._dicom_available = False  # Track if DICOM data is available
         
         # Brightness control variables
         self._brightness_slider: Optional[QSlider] = None
@@ -183,13 +185,10 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         if not self._overlay_enabled:
             return bmode_image
         
-        # Access DICOM data from model via parent controller
-        dicom_data = None
-        if hasattr(self, '_parent_controller') and self._parent_controller:
-            if hasattr(self._parent_controller, 'model'):
-                dicom_data = self._parent_controller.model.get_dicom_data()
+        dicom_data = self._parent_controller.get_dicom_data()
+        self._dicom_available = dicom_data['available']
         
-        if not dicom_data or not dicom_data.get('available'):
+        if not dicom_data or not self._dicom_available:
             return bmode_image
             
         dicom_image = dicom_data.get('image')
@@ -366,13 +365,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._transparency_value_label = self._ui.transparency_value_label
         self._load_dicom_button = self._ui.load_dicom_button
         
-        # Check model for DICOM availability
-        dicom_available = False
-        if hasattr(self, '_parent_controller') and self._parent_controller:
-            if hasattr(self._parent_controller, 'model'):
-                dicom_available = self._parent_controller.model.dicom_available
-        
-        if not dicom_available:
+        if not self._dicom_available:
             # Hide overlay controls if DICOM is not available
             self._dicom_overlay_checkbox.hide()
             self._transparency_slider.hide()
@@ -459,22 +452,9 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         if dicom_file:
             # Show loading text
             self.show_loading()
-            from PyQt6.QtWidgets import QApplication
             QApplication.processEvents()
             
-            # Check if we have access to the model
-            model = None
-            if hasattr(self, '_parent_controller') and self._parent_controller:
-                if hasattr(self._parent_controller, 'model'):
-                    model = self._parent_controller.model
-
-            # Try to load the DICOM file via model if available, else fallback to DicomLoader
-            if model:
-                success = model.load_dicom_file(dicom_file)
-            else:
-                from src.qus.image_loading.dicom_loader import DicomLoader
-                dicom_pixels = DicomLoader.load_dicom_file(dicom_file)
-                success = dicom_pixels is not None
+            success = self._parent_controller.load_dicom_file(dicom_file)
             
             # Hide loading text
             self.hide_loading()
