@@ -93,23 +93,26 @@ class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
         
         items = list(self.numerical_data.items())
         lines = []
-        for i in range(0, len(items), 2):
-            line = "    ".join(f"{k}: {v:.2f}" for k, v in items[i:i+2])
+        left_col = items[::2]
+        right_col = items[1::2]
+        for i in range(len(left_col)):
+            lk, lv = left_col[i]
+
+            if i < len(right_col):
+                rk, rv = right_col[i]
+                line = (
+                    f"{lk:<15}{lv:>8.2f}"
+                    f"    "
+                    f"{rk:<15}{rv:>8.2f}"
+                )
+            else:
+                line = f"{lk:<15}{lv:>8.2f}"
+
             lines.append(line)
 
         summary_text = "\n".join(lines)
-
-        ax_summary = fig.add_axes([0, 0.85, 1, 0.15])
-        ax_summary.text(
-            0.5, 0.5, summary_text,
-            ha='center', va='center',
-            fontsize=10,
-            wrap=True,
-            color='white',
-            bbox=dict(facecolor='black', alpha=0.5, pad=6)
-        )
-        ax_summary.axis('off')
-
+        self._ui.summary_label.setText(summary_text)
+  
         if text.endswith("_paramap"):
             legend_path = self._visualization_folder / f"{text[:-len('_paramap')]}_legend.png"
             legend_im = plt.imread(legend_path)
