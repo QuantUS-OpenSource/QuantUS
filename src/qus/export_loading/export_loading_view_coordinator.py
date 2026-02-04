@@ -95,6 +95,7 @@ class ExportLoadingViewCoordinator(QWidget):
     
     def update_views(self):
         """Update all views with current data."""
+  
         # Highlight the current section in the sidebar
         self._highlight_sidebar()
         
@@ -119,6 +120,7 @@ class ExportLoadingViewCoordinator(QWidget):
                     viz_funcs = self.controller._viz_controller.get_selected_visualization_functions()
                     recommended = self.controller._recommend_export_functions(viz_funcs)
                     self._export_functions_widget.set_recommended_functions(recommended)
+                    self.controller.set_export_functions(recommended)
                 except Exception:
                     self._export_functions_widget.set_recommended_functions([])
                 

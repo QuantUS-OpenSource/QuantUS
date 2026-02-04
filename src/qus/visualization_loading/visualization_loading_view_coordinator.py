@@ -113,6 +113,7 @@ class VisualizationLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         if self._visualization_preview_widget is None:
             self._visualization_preview_widget = VisualizationPreview2DWidget(self._image_data, summary_data)
             self._visualization_preview_widget.back_requested.connect(self._on_visualization_preview_back)
+            self._visualization_preview_widget.export_requested.connect(self._on_export_requested)
             self.addWidget(self._visualization_preview_widget)
 
         self.setCurrentWidget(self._visualization_preview_widget)
@@ -152,6 +153,10 @@ class VisualizationLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         """Handle back navigation from function selection."""
         # Since we skip analysis type selection, go back to the main application flow
         self.back_requested.emit()
+
+    def _on_export_requested(self) -> None:
+        """Handle data export navigation from visualization preview."""
+        self._emit_user_action("visualization_loading_continue", None)
 
     # ============================================================================
     # UTILITY METHODS

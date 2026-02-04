@@ -60,6 +60,12 @@ class VisualizationLoadingController(QObject):
         available_func_names = self._model.get_compatible_visualization_funcs(self._selected_visualization_type)
         self._view_coordinator.show_function_selection(available_func_names)
     
+    def get_selected_visualization_functions(self):
+        return self._selected_visualization_funcs
+
+    def get_last_visualization_obj(self):
+        return self._visualization_obj
+    
     def get_widget(self):
         """Get the main widget for this controller.
         
@@ -93,7 +99,7 @@ class VisualizationLoadingController(QObject):
         """
         if action_name == "visualization_functions_selected":
             self._handle_analysis_functions_selection(action_data)
-        
+
         self.user_action.emit(action_name, action_data)
 
     def _on_back_requested(self) -> None:
