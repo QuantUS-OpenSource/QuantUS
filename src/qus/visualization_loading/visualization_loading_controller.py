@@ -61,9 +61,11 @@ class VisualizationLoadingController(QObject):
         self._view_coordinator.show_function_selection(available_func_names)
     
     def get_selected_visualization_functions(self):
+        """Get selected visualization functions"""
         return self._selected_visualization_funcs
 
     def get_last_visualization_obj(self):
+        """Get the visualization object"""
         return self._visualization_obj
     
     def get_widget(self):
