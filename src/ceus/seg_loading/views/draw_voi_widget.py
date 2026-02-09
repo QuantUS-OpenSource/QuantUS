@@ -196,6 +196,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._connect_signals()
         self._connect_matplotlib_events()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._update_scan_display()  # Initial UI update
+        self._refresh_frames()       # Mark all planes for first update
 
     # ======================= Matplotlib Mouse Interaction ===================
     def _connect_matplotlib_events(self):
@@ -325,6 +327,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         self._ui.scan_name_input.setText(self._image_data.scan_name)
         self._ui.toggle_crosshair_visibility_button.setText('Hide Crosshair')
+        self._ui.cur_slice_label.setText("Current Frame:")
 
         self._ui.interp_loading_label.hide(); self._ui.saving_voi_label.hide()
         self._ui.navigating_label.hide(); self._ui.undo_last_roi_button.hide()
@@ -685,9 +688,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             if scatter: artists.append(scatter)
             if mask: artists.append(mask)
 
-            # Only update frame counters occasionally or when pending refreshed
-            if self._ax_sag_cor_pending[plane_ix]:
-                self._update_scan_display()
             return artists
 
         self._ax_sag_cor_animations[plane_ix] = anim.FuncAnimation(
@@ -745,6 +745,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if [cx, cy, cz, ct] != self._crosshair_xyzt:
             self._crosshair_xyzt = [cx, cy, cz, ct]
             self._refresh_frames()
+            self._update_scan_display()
         return cx, cy, cz, ct
     
     def _update_seg_masks(self, plane_ix):
@@ -806,10 +807,34 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.toggle_crosshair_visibility_button.clicked.connect(self._on_toggle_crosshair_visibility)
         self._ui.save_voi_button.clicked.connect(self._on_save_voi_clicked)
         
+        # Configure slice/time controls
         self._ui.cur_slice_slider.setMinimum(0)
         self._ui.cur_slice_slider.setMaximum(max(0, self._num_slices - 1))
         self._ui.cur_slice_slider.setValue(self._crosshair_xyzt[3])
         self._ui.cur_slice_slider.valueChanged.connect(self._on_time_slider_changed)
+
+        # Configure spin box for frame-based navigation
+        self._ui.cur_slice_spin_box.setRange(1, self._num_slices)
+        self._ui.cur_slice_spin_box.setSingleStep(1)
+        self._ui.cur_slice_spin_box.setDecimals(0)
+        self._ui.cur_slice_spin_box.setValue(self._crosshair_xyzt[3] + 1)
+        self._ui.cur_slice_spin_box.valueChanged.connect(self._on_time_spin_box_changed)
+
+        # Set initial total frames for all planes
+        self._ui.ax_total_frames.setText(str(self._z_len))
+        self._ui.sag_total_frames.setText(str(self._x_len))
+        self._ui.cor_total_frames.setText(str(self._y_len))
+        self._ui.cur_slice_total.setText(str(self._num_slices))
+
+    def _on_time_spin_box_changed(self, value: float):
+        """Handle user changing the time spin box."""
+        frame_idx = int(value) - 1
+        
+        # Clamp to valid range
+        frame_idx = max(0, min(self._num_slices - 1, frame_idx))
+        
+        if self._ui.cur_slice_slider.value() != frame_idx:
+            self._ui.cur_slice_slider.setValue(frame_idx)
 
     def _on_time_slider_changed(self, value: int):  # type: ignore
         """Handle user sliding through time dimension (t)."""
@@ -1017,6 +1042,21 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.ax_frame_num.setText(str(self._crosshair_xyzt[2] + 1))
         self._ui.sag_frame_num.setText(str(self._crosshair_xyzt[0] + 1))
         self._ui.cor_frame_num.setText(str(self._crosshair_xyzt[1] + 1))
+
+        # Update total frame labels
+        self._ui.ax_total_frames.setText(str(self._z_len))
+        self._ui.sag_total_frames.setText(str(self._x_len))
+        self._ui.cor_total_frames.setText(str(self._y_len))
+
+        # Update current slice/frame display
+        current_t = self._crosshair_xyzt[3]
+        
+        # Block signals to avoid feedback loop
+        self._ui.cur_slice_spin_box.blockSignals(True)
+        self._ui.cur_slice_spin_box.setValue(current_t + 1)
+        self._ui.cur_slice_spin_box.blockSignals(False)
+        
+        self._ui.cur_slice_total.setText(str(self._num_slices))
 
     def mousePressEvent(self, a0):
         super().mousePressEvent(a0)
