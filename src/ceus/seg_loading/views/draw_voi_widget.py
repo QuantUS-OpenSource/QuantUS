@@ -21,7 +21,7 @@ from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
 from .spline import calculateSpline3D, calculateSpline
-from ...image_preprocessing.functions import enhance_contrast_resolution, denoise_ceus_wavelet
+from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
 
 # Philips CEUS Colormap: Grayscale -> Red -> Yellow
 philips_colors = [
@@ -615,13 +615,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         return arr
     
     def _enhance_volume(self, volume_3d: np.ndarray) -> np.ndarray:
-        """Enhance a 3D image volume using predefined enhancement methods."""
-        # Enhance Contrast Resolution
-        enhanced = enhance_contrast_resolution(volume_3d, method='clahe', clip_limit=self._clahe_clip_limit)
-        enhanced = enhance_contrast_resolution(enhanced, method='gamma', gamma=self._gamma)
-        # enhanced = denoise_ceus_wavelet(enhanced, wavelet='db1')
-       
-        return enhanced
+        """Enhance a 3D image volume using predefined enhancement methods in the backend engine."""
+        # Create a temporary UltrasoundImage for the current frame
+        temp_im = UltrasoundImage(self._image_data.scan_path)
+        temp_im.pixel_data = volume_3d
+        temp_im.pixdim = self._image_data.pixdim
+        temp_im.frame_rate = self._image_data.frame_rate
+        
+        # Apply backend engine functions directly on the UltrasoundImage object
+        temp_im = enhance_clahe(temp_im, clip_limit=self._clahe_clip_limit)
+        temp_im = enhance_gamma(temp_im, gamma=self._gamma)
+        
+        return temp_im.pixel_data
 
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
