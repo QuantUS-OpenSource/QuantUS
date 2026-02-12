@@ -6,7 +6,7 @@ replacing the individual models for each component.
 """
 
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .mvc.base_model import BaseModel
@@ -88,6 +88,7 @@ class ApplicationModel(BaseModel):
     
     # Additional signals for application-specific events
     image_loaded = pyqtSignal(UltrasoundImage)
+    preprocessing_complete = pyqtSignal(UltrasoundImage)
     segmentation_loaded = pyqtSignal(CeusSeg)
 
     def __init__(self):
@@ -251,7 +252,90 @@ class ApplicationModel(BaseModel):
         # Start loading
         self._set_loading(True)
         self._scan_worker.start()
-    
+
+    # =========================================================================
+    # Preprocessing Interface
+    # =========================================================================
+
+    def get_preprocessing_options(self) -> Dict[str, Any]:
+        """
+        Get available preprocessing functions from the engine.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of function names and function objects
+        """
+        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
+        return get_im_preproc_funcs()
+
+    def get_preprocessing_kwargs_requirements(self, func_names: list) -> list:
+        """
+        Get required keyword arguments for a list of preprocessing functions.
+        
+        Args:
+            func_names: List of preprocessing function names
+            
+        Returns:
+            list: List of required keyword arguments
+        """
+        from engines.ceus.src.image_preprocessing.options import get_required_im_preproc_kwargs
+        return get_required_im_preproc_kwargs(func_names)
+
+    def apply_preprocessing(self, func_configs: List[Dict[str, Any]]) -> None:
+        """
+        Apply preprocessing to the model's current image.
+        This modifies the image data in the model.
+        
+        Args:
+            func_configs: List of dicts with 'name' and 'kwargs' for each function
+        """
+        if not self._image_data:
+            self._emit_error("No image loaded to preprocess")
+            return
+            
+        try:
+            funcs = self.get_preprocessing_options()
+            processed_image = self._image_data
+            
+            for config in func_configs:
+                name = config['name']
+                kwargs = config.get('kwargs', {})
+                if name in funcs:
+                    processed_image = funcs[name](processed_image, **kwargs)
+                else:
+                    print(f"WARNING: Preprocessing function {name} not found")
+            
+            self._image_data = processed_image
+            self.preprocessing_complete.emit(self._image_data)
+        except Exception as e:
+            self._emit_error(f"Error during preprocessing: {e}")
+
+    def enhance_image(self, image: UltrasoundImage, func_configs: List[Dict[str, Any]]) -> UltrasoundImage:
+        """
+        Enhance a given UltrasoundImage and return the result.
+        Does not modify the model state. Used for preview/on-the-fly enhancement.
+        
+        Args:
+            image: UltrasoundImage object to enhance
+            func_configs: List of dicts with 'name' and 'kwargs' for each function
+            
+        Returns:
+            UltrasoundImage: The enhanced image object
+        """
+        try:
+            funcs = self.get_preprocessing_options()
+            processed_image = image
+            
+            for config in func_configs:
+                name = config['name']
+                kwargs = config.get('kwargs', {})
+                if name in funcs:
+                    processed_image = funcs[name](processed_image, **kwargs)
+            
+            return processed_image
+        except Exception as e:
+            print(f"DEBUG: enhance_image error: {e}")
+            return image
+
     def _validate_image_input(self, input_data: Dict[str, Any]) -> bool:
         """
         Validate input data for scan loading.
@@ -294,6 +378,17 @@ class ApplicationModel(BaseModel):
         # Check if loading was successful
         if isinstance(image_data, UltrasoundImage):
             self._image_data = image_data
+            
+            # Print NIfTI information if applicable
+            scan_path = getattr(image_data, 'scan_path', '')
+            if scan_path and scan_path.lower().endswith(('.nii', '.nii.gz')):
+                print(f"\n--- NIfTI Image Loaded (QuantUS GUI) ---")
+                print(f"Path: {scan_path}")
+                print(f"Shape: {getattr(image_data.pixel_data, 'shape', 'Unknown')}")
+                print(f"Pixel Dimensions: {getattr(image_data, 'pixdim', 'Unknown')}")
+                print(f"Frame Rate: {getattr(image_data, 'frame_rate', 'Unknown')}")
+                print(f"----------------------------------------\n")
+            
             self.image_loaded.emit(image_data)
         else:
             print(f"DEBUG: Image loading failed - invalid image data:")
@@ -434,6 +529,16 @@ class ApplicationModel(BaseModel):
         # Check if loading was successful
         if seg_data and hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None:
             self._seg_data = seg_data
+            
+            # Print NIfTI information if applicable
+            seg_path = getattr(self._seg_worker, 'seg_path', '')
+            if seg_path and seg_path.lower().endswith(('.nii', '.nii.gz')):
+                print(f"\n--- NIfTI Segmentation Loaded (QuantUS GUI) ---")
+                print(f"Path: {seg_path}")
+                print(f"Shape: {getattr(seg_data.seg_mask, 'shape', 'Unknown')}")
+                print(f"Pixel Dimensions: {getattr(seg_data, 'pixdim', 'Unknown')}")
+                print(f"-----------------------------------------------\n")
+                
             self.segmentation_loaded.emit(seg_data)
         else:
             print(f"DEBUG: Segmentation loading failed - invalid seg data")
