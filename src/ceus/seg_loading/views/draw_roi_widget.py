@@ -59,6 +59,8 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         self._target_frame = 0  # Target frame for smooth transitions
         self._frame_update_pending = False
         
+        self._width_scale = 1.0
+        
         self._setup_ui()
         self._connect_signals()
         self._show_draw_type_selection()
@@ -110,6 +112,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
         # Setup matplotlib canvas for frame preview
         self._setup_matplotlib_canvas()
+        self._setup_enhancement_controls()
         
         # Display frame preview
         self._initialize_frame_preview()
@@ -229,6 +232,76 @@ class DrawROIWidget(QWidget, BaseViewMixin):
             self._roi_scatter_artist.set_offsets(np.array(self._roi_scatter_coords).T)
         else:
             self._roi_scatter_artist.set_offsets(np.empty((0, 2)))
+
+    def _on_width_changed(self, value: int) -> None:
+        """Handle width scale change."""
+        self._width_scale = value / 10.0
+        if hasattr(self, 'width_val_lbl'):
+            self.width_val_lbl.setText(f"{self._width_scale:.1f}")
+        self._update_aspect_ratio()
+
+    def _update_aspect_ratio(self) -> None:
+        """Update the aspect ratio of the main axes based on width scale."""
+        if not hasattr(self, '_ax') or self._ax is None:
+            return
+            
+        # Calculate base physical aspect ratio
+        width_phys = self._all_frames.shape[2] * self._image_data.pixdim[1] * self._width_scale
+        height_phys = self._all_frames.shape[1] * self._image_data.pixdim[0]
+        
+        if height_phys != 0:
+            new_aspect = width_phys / height_phys
+            extent = self._im_artist.get_extent()
+            self._ax.set_aspect(abs((extent[1]-extent[0])/(extent[3]-extent[2]))/new_aspect)
+            self._matplotlib_canvas.draw_idle()
+
+    def _setup_enhancement_controls(self) -> None:
+        """Add enhancement sliders to the sidebar."""
+        from PyQt6.QtWidgets import QVBoxLayout, QLabel, QSlider, QFrame
+        
+        enh_group = QFrame()
+        enh_group.setStyleSheet("background-color: rgba(255, 255, 255, 0); border: none;")
+        container_layout = QVBoxLayout(enh_group)
+        container_layout.setContentsMargins(0, 10, 0, 10)
+        container_layout.setSpacing(15)
+
+        def create_enh_column(label_text, min_val, max_val, current_val, callback):
+            col_widget = QWidget()
+            col_layout = QVBoxLayout(col_widget)
+            col_layout.setContentsMargins(0, 0, 0, 0)
+            col_layout.setSpacing(5)
+            
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet("font-size: 14px; color: white; font-weight: bold;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            col_layout.addWidget(lbl)
+            
+            row_layout = QHBoxLayout()
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(min_val, max_val)
+            slider.setValue(current_val)
+            slider.setMinimumWidth(100)
+            slider.setMaximumWidth(120)
+            slider.valueChanged.connect(callback)
+            
+            val_lbl = QLabel(f"{current_val/10.0:.1f}")
+            val_lbl.setMinimumWidth(40)
+            val_lbl.setStyleSheet("color: #3498db; font-weight: bold; font-size: 14px;")
+            
+            row_layout.addWidget(slider)
+            row_layout.addWidget(val_lbl)
+            col_layout.addLayout(row_layout)
+            
+            return col_widget, slider, val_lbl
+
+        width_col, self.width_slider, self.width_val_lbl = create_enh_column(
+            "WIDTH", 1, 50, int(self._width_scale * 10), self._on_width_changed
+        )
+        
+        container_layout.addWidget(width_col)
+
+        # Add to the layout below the frame slider
+        self._ui.side_bar_layout.addWidget(enh_group)
 
     def _on_frame_changed(self, value: int) -> None:
         """Handle frame slider change with optimized performance."""
