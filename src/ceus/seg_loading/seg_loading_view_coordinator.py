@@ -200,6 +200,21 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self.addWidget(self._roi_drawing_widget)
         self.setCurrentWidget(self._roi_drawing_widget)
 
+    def show_segmentation_preview(self, seg_data: CeusSeg) -> None:
+        """
+        Show the segmentation preview widget.
+        
+        Args:
+            seg_data: Loaded segmentation data
+        """
+        self._seg_data = seg_data
+        
+        # For now, since CEUS specific preview widgets are not yet implemented,
+        # we automatically confirm the segmentation to allow the workflow to continue.
+        # This prevents the application from getting "stuck" after loading.
+        print(f"DEBUG: Segmentation loaded, automatically confirming (Preview not yet implemented for CEUS)")
+        self.user_action.emit('segmentation_confirmed', seg_data)
+
     # ============================================================================
     # USER ACTION HANDLING - Process user interactions and communicate with controller
     # ============================================================================
