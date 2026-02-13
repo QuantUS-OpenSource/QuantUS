@@ -10,7 +10,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from ..mvc.base_controller import BaseController
 from .analysis_loading_view_coordinator import AnalysisLoadingViewCoordinator
-from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg 
+from engines.ceus.src.data_objs.image import UltrasoundImage
+from engines.ceus.src.data_objs.seg import CeusSeg
 from engines.ceus.src.time_series_analysis.curves.framework import CurvesAnalysis
 
 
@@ -64,20 +65,30 @@ class AnalysisLoadingController(BaseController):
     def _setup_analysis_options(self) -> None:
         """Setup available analysis types and functions in the view."""
         analysis_types, analysis_functions = self._model.get_analysis_types()
+        print(f"DEBUG: Available analysis types: {list(analysis_types.keys())}")
         
-        # Automatically select "Paramap" as the analysis type
-        paramap_type = "paramap"
-        if paramap_type in analysis_types:
-            self._selected_analysis_type = paramap_type
-            if self._model.set_analysis_type(paramap_type):
-                # Get available functions for Paramap analysis
-                available_functions = self._model.get_analysis_functions(paramap_type)
+        # Automatically select the best available analysis type
+        # Prefer curves_paramap, then curves, or just the first available one
+        selected_type = None
+        for preferred in ["curves_paramap", "curves", "paramap"]:
+            if preferred in analysis_types:
+                selected_type = preferred
+                break
+        
+        if not selected_type and analysis_types:
+            selected_type = list(analysis_types.keys())[0]
+
+        if selected_type:
+            self._selected_analysis_type = selected_type
+            if self._model.set_analysis_type(selected_type):
+                # Get available functions for selected analysis type
+                available_functions = self._model.get_analysis_functions(selected_type)
                 # Skip analysis type selection and go directly to function selection
                 self._view_coordinator.show_function_selection(available_functions)
             else:
-                self._view_coordinator.show_error("Failed to set Paramap analysis type")
+                self._view_coordinator.show_error(f"Failed to set {selected_type} analysis type")
         else:
-            self._view_coordinator.show_error("Paramap analysis type not available")
+            self._view_coordinator.show_error("No analysis types available")
             
     def _on_user_action(self, action_name: str, action_data: Any) -> None:
         """
@@ -98,7 +109,7 @@ class AnalysisLoadingController(BaseController):
             print(f"DEBUG: Controller received analysis_execution_started action")
             print(f"DEBUG: action_data = {action_data}")
             self._handle_analysis_execution(action_data)
-        elif action_name == "analysis_completed":
+        elif action_name == "analysis_loading_completed":
             self._handle_analysis_completion(action_data)
         else:
             # Forward unknown actions to application controller
