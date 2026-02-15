@@ -94,21 +94,25 @@ class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
             return
         
         items = list(self.numerical_data.items())
+        max_key_length = max(len(k) for k, _ in items)
+        max_value_length = max(len(f"{v:.4e}") for _, v in items)
+
         lines = []
         left_col = items[::2]
         right_col = items[1::2]
         for i in range(len(left_col)):
             lk, lv = left_col[i]
+            lv_str = f"{lv:.4e}".rjust(max_value_length)
 
             if i < len(right_col):
                 rk, rv = right_col[i]
+                rv_str = f"{rv:.4e}".rjust(max_value_length)
                 line = (
-                    f"{lk:<15}{lv:>8.2f}"
-                    f"    "
-                    f"{rk:<15}{rv:>8.2f}"
+                    f"{lk:<{max_key_length}} {lv_str}    "
+                    f"{rk:<{max_key_length}} {rv_str}"
                 )
             else:
-                line = f"{lk:<15}{lv:>8.2f}"
+                line = f"{lk:<{max_key_length}} {lv_str}"
 
             lines.append(line)
 

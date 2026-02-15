@@ -1067,23 +1067,12 @@ class ApplicationModel(BaseModel):
         
         summary = {}
 
-        if hasattr(self._analysis_data.windows[0].results, 'ss'):
-            ss_arr = [window.results.ss for window in self._analysis_data.windows]
-            summary["Av. SS (1e-6)"] = np.mean(np.array(ss_arr))
-        
-        if hasattr(self._analysis_data.windows[0].results, 'si'):
-            si_arr = [window.results.si for window in self._analysis_data.windows]
-            summary["Av. SI"] = np.mean(np.array(si_arr))
+        for method_name in self._analysis_data.windows[0].results.__dict__.keys():            
+            # Skip results we don't have parametric maps for (e.g. string or array results that are not reduced to a single value)
+            if isinstance(getattr(self._analysis_data.windows[0].results, method_name), (str, list, np.ndarray)):
+                continue
 
-        if hasattr(self._analysis_data.windows[0].results, 'mbf'):
-            mbf_arr = [window.results.mbf for window in self._analysis_data.windows]
-            summary["Av. MBF"] = np.mean(np.array(mbf_arr))
+            method_arr = [getattr(window.results, method_name) for window in self._analysis_data.windows if hasattr(window.results, method_name)]
+            summary[f"Av. {method_name.upper()}"] = np.mean(np.array(method_arr))
 
-        if hasattr(self._analysis_data.single_window.results, 'bsc'):
-            summary["BSC"] = self._analysis_data.single_window.results.bsc
-
-        if hasattr(self._analysis_data.single_window.results, 'att_coef'):
-            summary["Att. Coef"] = self._analysis_data.single_window.results.att_coef
-        
         return summary
-
