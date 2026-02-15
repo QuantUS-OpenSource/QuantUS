@@ -578,7 +578,7 @@
       </layout>
      </item>
      <item>
-      <layout class="QVBoxLayout" name="preview_layout" stretch="1,0,0,0">
+      <layout class="QVBoxLayout" name="preview_layout" stretch="0,0,0,0,0">
        <property name="spacing">
         <number>10</number>
        </property>
@@ -643,6 +643,31 @@
           <string notr="true">QComboBox {
 	color: white;
 }</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="summary_label">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="font">
+          <font>
+           <family>Courier New</family>
+           <pointsize>12</pointsize>
+          </font>
+         </property>
+         <property name="text">
+          <string/>
+         </property>
+         <property name="textFormat">
+          <enum>Qt::TextFormat::AutoText</enum>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignmentFlag::AlignLeading|Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignTop</set>
          </property>
         </widget>
        </item>
