@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Tuple, List
 import numpy as np
 import nibabel as nib
-from scipy.ndimage import binary_fill_holes, binary_erosion
+from scipy.ndimage import binary_fill_holes
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 from matplotlib.backends.backend_qtagg import FigureCanvas
@@ -21,7 +21,6 @@ from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
 from .spline import calculateSpline3D, calculateSpline
-from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
 
 # Philips CEUS Colormap: Grayscale -> Red -> Yellow
 philips_colors = [
@@ -132,6 +131,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     file_selected = pyqtSignal(dict)  # {'seg_path': str, 'seg_type': str}
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
+    apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
 
     def __init__(self, image_data: UltrasoundImage, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
@@ -196,6 +196,13 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._connect_signals()
         self._connect_matplotlib_events()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
+        """Update the displayed image data, e.g. after preprocessing."""
+        assert enhanced_frame.shape[:-1] == self._pix_data.shape[:-1], "Enhanced pixel data must have the same shape as original"
+        self._enhanced_cache = enhanced_frame[:, :, :, 0]  # Store only the current time frame in cache
+        self._enhanced_cache_frame = frame
+        self._refresh_frames()
 
     # ======================= Matplotlib Mouse Interaction ===================
     def _connect_matplotlib_events(self):
@@ -567,7 +574,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 ax = fig.add_subplot(111)
                 ax.axis('off')
                 # Get initial slice
-                slice_arr = self._get_plane_slice(plane_ix)
+                slice_arr = self._get_plane_slice(plane_ix, initializing=True)
                 mask_arr = self._get_mask_slice(plane_ix)
 
                 current_cmap = philips_cmap if self._use_philips_ceus else 'gray'
@@ -589,19 +596,21 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             except Exception as e:
                 self.show_error(f"Error initializing plane display {plane_ix}: {e}")
 
-    def _get_plane_slice(self, plane_ix: int):
+    def _get_plane_slice(self, plane_ix: int, initializing=False):
         """Return 2D numpy slice for given plane index based on current crosshair."""
         idx = self._get_plane_indices(plane_ix)
         current_t = self._crosshair_xyzt[3]
         
         # Check if we need to enhance a new frame
-        if self._enhanced_cache is None or self._enhanced_cache_frame != current_t:
+        if not initializing and (self._enhanced_cache is None or self._enhanced_cache_frame != current_t):
             # Get the 3D volume for current time frame
             current_frame_3d = self._pix_data[:, :, :, current_t]
             
             # Enhance the entire 3D volume ONCE per frame
-            self._enhanced_cache = self._enhance_volume(current_frame_3d)
+            self._enhance_volume(current_frame_3d) # performs enhancement SYNCHRONOUSLY
             self._enhanced_cache_frame = current_t
+        elif initializing:
+            self._enhanced_cache = self._image_data.pixel_data[:, :, :, current_t]  # Cache the initial frame without enhancement for faster startup
         
         # Extract the 2D slice from cached enhanced volume
         slice_idx = list(idx[:3])  # Remove time dimension
@@ -614,19 +623,35 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             arr = arr.T
         return arr
     
-    def _enhance_volume(self, volume_3d: np.ndarray) -> np.ndarray:
+    def _enhance_volume(self, volume_3d: np.ndarray) -> None:
         """Enhance a 3D image volume using predefined enhancement methods in the backend engine."""
         # Create a temporary UltrasoundImage for the current frame
         temp_im = UltrasoundImage(self._image_data.scan_path)
-        temp_im.pixel_data = volume_3d
+        temp_im.pixel_data = volume_3d.T[None].T.copy()  # Add back time dimension for processing
         temp_im.pixdim = self._image_data.pixdim
         temp_im.frame_rate = self._image_data.frame_rate
-        
-        # Apply backend engine functions directly on the UltrasoundImage object
-        temp_im = enhance_clahe(temp_im, clip_limit=self._clahe_clip_limit)
-        temp_im = enhance_gamma(temp_im, gamma=self._gamma)
-        
-        return temp_im.pixel_data
+
+        clahe_preproc_dict = {
+            'name': 'enhance_clahe',
+            'image_data': temp_im,
+            'frame_ix': self._crosshair_xyzt[3],
+            'kwargs': {
+                'clip_limit': self._clahe_clip_limit,
+                'tile_grid_size': (8, 8),
+            }
+        }
+
+        gamma_preproc_dict = {
+            'name': 'enhance_gamma',
+            'image_data': None,  # signal to reuse the already CLAHE-enhanced image (all preprocs in the same batch share the same image input)
+            'frame_ix': self._crosshair_xyzt[3],
+            'kwargs': {
+                'gamma': self._gamma,
+            }
+        }
+
+        preproc_dicts = [clahe_preproc_dict, gamma_preproc_dict]
+        self.apply_preprocs_preview.emit(preproc_dicts) # synchronous call to apply the enhancements and update the cache via the connected slot
 
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
