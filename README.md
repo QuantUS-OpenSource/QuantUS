@@ -54,17 +54,3 @@ To keep your local copy of all QuantUS backends up to date, run the following co
 git submodule update --remote --merge
 ```
 
-## Developer notes
-
-### Remaining things to do for this repository
-
-- [ ] Support plugin inputs from the GUI directly. Since we're using submodules,
-        we don't want users copying and pasting files directly into the backend.
-        Thus, there should be a new folder `engines/plugins` which can contain all
-        plugin-related files and resources. Note each backend will need to be modified
-        to look for plugins in this new folder.
-- [ ] Use Github Actions to automatically update the submodules to their latest versions
-        on a regular basis (e.g., weekly, daily, or whenever a commit is completed via webhook).
-- [ ] Implement all missing GUI features from Legacy QuantUS. This won't be trivial as
-        it will require significant additions to the MVC architecture to support
-        more complex interactions.
