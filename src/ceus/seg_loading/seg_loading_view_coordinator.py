@@ -183,10 +183,18 @@ class SegLoadingViewCoordinator(QStackedWidget):
         # Connect signals to handle user actions
         self._voi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._voi_drawing_widget.close_requested.connect(self.close_requested.emit)
+        self._voi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
 
         # Add to stack and show
         self.addWidget(self._voi_drawing_widget)
         self.setCurrentWidget(self._voi_drawing_widget)
+
+    def preview_modified_image(self, modified_image: UltrasoundImage, frame: int) -> None:
+        """Show the preprocessed data in the VOI drawing widget."""
+        if self._voi_drawing_widget:
+            self._voi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)
+        else:
+            raise RuntimeError("VOI drawing widget not initialized")
 
     def show_roi_drawing(self) -> None:
         """Show the ROI drawing widget."""
@@ -224,6 +232,15 @@ class SegLoadingViewCoordinator(QStackedWidget):
             file_data: Dictionary with selected file path and seg type
         """
         self._emit_user_action('load_segmentation', file_data)
+
+    def _on_preprocs_preview_requested(self, preproc_data_list: list) -> None:
+        """
+        Emit signal to controller to apply multiple preprocessing functions for preview.
+        
+        Args:
+            preproc_data_list: List of dictionaries with 'name' and 'kwargs' keys
+        """
+        self._emit_user_action('apply_preprocs_preview', preproc_data_list)
     
     def _emit_user_action(self, action_name: str, action_data: Any) -> None:
         """
