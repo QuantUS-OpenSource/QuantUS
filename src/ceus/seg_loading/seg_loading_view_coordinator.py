@@ -181,6 +181,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._voi_drawing_widget = DrawVOIWidget(self._image_data)
 
         # Connect signals to handle user actions
+        self._voi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
         self._voi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._voi_drawing_widget.close_requested.connect(self.close_requested.emit)
 

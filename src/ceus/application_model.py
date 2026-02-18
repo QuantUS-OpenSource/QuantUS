@@ -38,6 +38,11 @@ class ScanLoadingWorker(QThread):
                 self.image_path,  
                 **self.scan_loader_kwargs
             )
+
+            if isinstance(image_data, int):
+                self.error_msg.emit(f"Error loading scan: Loader error code {image_data}")
+                return
+
             self.finished.emit(image_data)
             
         except Exception as e:
@@ -69,6 +74,10 @@ class SegLoadingWorker(QThread):
                 **self.seg_loader_kwargs
             )
             
+            if isinstance(seg_data, int):
+                self.error_msg.emit(f"Error loading segmentation: Loader error code {seg_data}")
+                return
+
             self.finished.emit(seg_data)
             
         except Exception as e:
@@ -508,7 +517,7 @@ class ApplicationModel(BaseModel):
         """
         try:
             if seg_type_display_name == "Manual Segmentation":
-                self._selected_seg_type = "pkl_roi"
+                self._selected_seg_type = "nifti"
                 return True
 
             # Convert display name back to internal key
