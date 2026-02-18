@@ -11,13 +11,24 @@ import matplotlib.animation as anim
 from scipy import interpolate
 from PIL import Image, ImageDraw
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.colors import LinearSegmentedColormap
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox, QLabel
 from PyQt6.QtCore import pyqtSignal, Qt
 
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_roi_ui import Ui_constructRoi
 from engines.ceus.src.data_objs import UltrasoundImage
+from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
+
+# Philips CEUS Colormap: Grayscale -> Red -> Yellow
+philips_colors = [
+    (0.0, 0.0, 0.0),    # 0% - Black
+    (0.4, 0.4, 0.4),    # 40% - Gray
+    (0.8, 0.0, 0.0),    # 80% - Red
+    (1.0, 1.0, 0.0)     # 100% - Yellow
+]
+philips_cmap = LinearSegmentedColormap.from_list("philips_ceus", philips_colors)
 
 
 class DrawROIWidget(QWidget, BaseViewMixin):
@@ -58,6 +69,18 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         self._roi_scatter_artist = None  # The ROI scatter artist for fast updates
         self._target_frame = 0  # Target frame for smooth transitions
         self._frame_update_pending = False
+        
+        # Enhancement parameters
+        self._clahe_clip_limit = 1.2
+        self._gamma = 1.5
+        self._width_scale = 1.0
+        
+        # Enhancement parameters
+        self._clahe_clip_limit = 1.2
+        self._gamma = 1.5
+        self._use_philips_ceus = False
+        self._enhanced_cache = None # Cache for enhanced current frame
+        self._enhanced_cache_idx = -1
         
         self._setup_ui()
         self._connect_signals()
@@ -110,6 +133,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
         # Setup matplotlib canvas for frame preview
         self._setup_matplotlib_canvas()
+        self._setup_enhancement_controls()
         
         # Display frame preview
         self._initialize_frame_preview()
@@ -230,6 +254,136 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         else:
             self._roi_scatter_artist.set_offsets(np.empty((0, 2)))
 
+    def _on_width_changed(self, value: int) -> None:
+        """Handle width scale change."""
+        self._width_scale = value / 10.0
+        if hasattr(self, 'width_val_lbl'):
+            self.width_val_lbl.setText(f"{self._width_scale:.1f}")
+        self._update_aspect_ratio()
+
+    def _update_aspect_ratio(self) -> None:
+        """Update the aspect ratio of the main axes based on width scale."""
+        if not hasattr(self, '_ax') or self._ax is None:
+            return
+            
+        # Calculate base physical aspect ratio
+        width_phys = self._all_frames.shape[2] * self._image_data.pixdim[1] * self._width_scale
+        height_phys = self._all_frames.shape[1] * self._image_data.pixdim[0]
+        
+        if height_phys != 0:
+            new_aspect = width_phys / height_phys
+            extent = self._im_artist.get_extent()
+            self._ax.set_aspect(abs((extent[1]-extent[0])/(extent[3]-extent[2]))/new_aspect)
+            self._matplotlib_canvas.draw_idle()
+
+    def _setup_enhancement_controls(self) -> None:
+        """Add enhancement sliders beside the frame slider in a single horizontal line."""
+        # Container frame for enhancement controls
+        enh_group = QFrame()
+        enh_group.setStyleSheet("background-color: rgba(255, 255, 255, 0); border: none;")
+        
+        # Main horizontal layout for the enhancement section
+        container_layout = QHBoxLayout(enh_group)
+        container_layout.setContentsMargins(0, 0, 15, 0)
+        container_layout.setSpacing(15)
+
+        def create_compact_control(label_text, min_val, max_val, current_val, callback):
+            # Widget to hold label, slider, and value in ONE line
+            ctrl_widget = QWidget()
+            ctrl_layout = QHBoxLayout(ctrl_widget)
+            ctrl_layout.setContentsMargins(0, 0, 0, 0)
+            ctrl_layout.setSpacing(5)
+            
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet("font-size: 10px; color: white; font-weight: bold;")
+            ctrl_layout.addWidget(lbl)
+            
+            # Slider
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(min_val, max_val)
+            slider.setValue(current_val)
+            slider.setStyleSheet(self._ui.frame_slider.styleSheet())
+            slider.setFixedWidth(70)
+            slider.setFixedHeight(12)
+            slider.valueChanged.connect(callback)
+            ctrl_layout.addWidget(slider)
+
+            val_lbl = QLabel(f"{current_val/10.0:.1f}")
+            val_lbl.setStyleSheet("color: #3498db; font-weight: bold; font-size: 10px;")
+            val_lbl.setMinimumWidth(22)
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            ctrl_layout.addWidget(val_lbl)
+            
+            return ctrl_widget, slider, val_lbl
+
+        # Create controls
+        clahe_w, self.clahe_slider, self.clahe_val_lbl = create_compact_control(
+            "CLAHE", 1, 100, int(self._clahe_clip_limit * 10), self._on_clahe_changed
+        )
+        gamma_w, self.gamma_slider, self.gamma_val_lbl = create_compact_control(
+            "GAMMA", 1, 40, int(self._gamma * 10), self._on_gamma_changed
+        )
+        width_w, self.width_slider, self.width_val_lbl = create_compact_control(
+            "WIDTH", 1, 50, int(self._width_scale * 10), self._on_width_changed
+        )
+        
+        # Pseudo colouring toggle nicely aligned
+        self.philips_check = QCheckBox("Pseudo colouring")
+        self.philips_check.setStyleSheet("color: white; font-weight: bold; font-size: 11px;")
+        self.philips_check.stateChanged.connect(self._on_philips_toggled)
+
+        # Add to horizontal layout
+        container_layout.addWidget(clahe_w)
+        container_layout.addWidget(gamma_w)
+        container_layout.addWidget(width_w)
+        container_layout.addWidget(self.philips_check)
+
+        # Add to the layout beside the frame slider (below the image)
+        self._ui.frameControlsLayout.insertWidget(0, enh_group)
+
+    def _on_clahe_changed(self, value: int) -> None:
+        """Handle CLAHE clip limit change."""
+        self._clahe_clip_limit = value / 10.0
+        if hasattr(self, 'clahe_val_lbl'):
+            self.clahe_val_lbl.setText(f"{self._clahe_clip_limit:.1f}")
+        self._invalidate_enhancement_cache()
+
+    def _on_gamma_changed(self, value: int) -> None:
+        """Handle gamma change."""
+        self._gamma = value / 10.0
+        if hasattr(self, 'gamma_val_lbl'):
+            self.gamma_val_lbl.setText(f"{self._gamma:.1f}")
+        self._invalidate_enhancement_cache()
+
+    def _on_philips_toggled(self, state: int) -> None:
+        """Handle Philips CEUS pseudocolor toggle."""
+        self._use_philips_ceus = state == Qt.CheckState.Checked.value
+        # Update colormap on artist
+        if self._im_artist:
+            new_cmap = philips_cmap if self._use_philips_ceus else 'gray'
+            self._im_artist.set_cmap(new_cmap)
+            self._matplotlib_canvas.draw_idle()
+
+    def _invalidate_enhancement_cache(self) -> None:
+        """Invalidate the enhancement cache and trigger display update."""
+        self._enhanced_cache = None
+        self._enhanced_cache_idx = -1
+        self._force_frame_update()
+
+    def _enhance_frame(self, frame_2d: np.ndarray) -> np.ndarray:
+        """Enhance a 2D image frame using backend engine functions."""
+        # Create a temporary UltrasoundImage for processing
+        temp_im = UltrasoundImage(self._image_data.scan_path)
+        temp_im.pixel_data = frame_2d
+        temp_im.pixdim = self._image_data.pixdim
+        temp_im.frame_rate = self._image_data.frame_rate
+        
+        # Apply enhancements
+        temp_im = enhance_clahe(temp_im, clip_limit=self._clahe_clip_limit)
+        temp_im = enhance_gamma(temp_im, gamma=self._gamma)
+        
+        return temp_im.pixel_data
+
     def _on_frame_changed(self, value: int) -> None:
         """Handle frame slider change with optimized performance."""
         self._target_frame = value
@@ -239,8 +393,18 @@ class DrawROIWidget(QWidget, BaseViewMixin):
     def _update_frame_display(self, frame_index: int) -> None:
         """Update the frame display with consistent parameters."""
         if self._im_artist:
-            self._displayed_im = self._all_frames[frame_index]
+            # Update cache if needed
+            if self._enhanced_cache is None or self._enhanced_cache_idx != frame_index:
+                self._enhanced_cache = self._enhance_frame(self._all_frames[frame_index])
+                self._enhanced_cache_idx = frame_index
+                
+            self._displayed_im = self._enhanced_cache
             self._im_artist.set_array(self._displayed_im)
+            
+            # Ensure correct colormap is applied (e.g. after initialization)
+            new_cmap = philips_cmap if self._use_philips_ceus else 'gray'
+            self._im_artist.set_cmap(new_cmap)
+            
             self._ui.cur_frame_label.setText(str(np.round(frame_index*self._image_data.frame_rate, decimals=2)))
 
     def _force_frame_update(self) -> None:
