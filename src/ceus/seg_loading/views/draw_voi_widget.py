@@ -21,7 +21,8 @@ from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
 from .spline import calculateSpline3D, calculateSpline
-from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
+from engines.ceus.src.image_preprocessing.image_preprocessors.enhance_clahe import enhance_clahe
+from engines.ceus.src.image_preprocessing.image_preprocessors.enhance_gamma import enhance_gamma
 
 # Philips CEUS Colormap: Grayscale -> Red -> Yellow
 philips_colors = [

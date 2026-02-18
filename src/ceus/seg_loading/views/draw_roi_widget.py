@@ -19,7 +19,8 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_roi_ui import Ui_constructRoi
 from engines.ceus.src.data_objs import UltrasoundImage
-from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
+from engines.ceus.src.image_preprocessing.image_preprocessors.enhance_clahe import enhance_clahe
+from engines.ceus.src.image_preprocessing.image_preprocessors.enhance_gamma import enhance_gamma
 
 # Philips CEUS Colormap: Grayscale -> Red -> Yellow
 philips_colors = [
