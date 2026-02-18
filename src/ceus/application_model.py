@@ -435,6 +435,8 @@ class ApplicationModel(BaseModel):
         if seg_data and hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None:
             self._seg_data = seg_data
             self.segmentation_loaded.emit(seg_data)
+            # Automatically confirm if this was loaded (either from file or manual save)
+            # This allows the app controller to catch the completion
         else:
             print(f"DEBUG: Segmentation loading failed - invalid seg data")
             self._emit_error("Failed to load segmentation data")

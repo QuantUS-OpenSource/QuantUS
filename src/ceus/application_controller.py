@@ -58,8 +58,13 @@ class ApplicationController(QObject):
     def _connect_model_signals(self) -> None:
         """Connect unified model signals to application controller."""
         self._model.image_loaded.connect(self._initialize_segmentation_loading)
+        self._model.segmentation_loaded.connect(self._on_segmentation_loaded)
         self._model.error_occurred.connect(self._on_model_error)
         
+    def _on_segmentation_loaded(self, seg_data: CeusSeg) -> None:
+        """Handle segmentation loading completion."""
+        self._on_segmentation_action('segmentation_confirmed', seg_data)
+
     def _initialize_image_loading(self) -> None:
         """Initialize the image loading screen."""
         if self._image_loading_controller:

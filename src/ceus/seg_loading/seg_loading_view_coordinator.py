@@ -193,6 +193,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._roi_drawing_widget = DrawROIWidget(self._image_data)
 
         # Connect signals to handle user actions
+        self._roi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
         self._roi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._roi_drawing_widget.close_requested.connect(self.close_requested.emit)
 
@@ -203,6 +204,19 @@ class SegLoadingViewCoordinator(QStackedWidget):
     # ============================================================================
     # USER ACTION HANDLING - Process user interactions and communicate with controller
     # ============================================================================
+
+    def _on_segmentation_saved(self, file_path: str) -> None:
+        """
+        Handle segmentation saved from the manual drawing widget.
+        
+        Args:
+            file_path: Path to the saved segmentation file
+        """
+        file_data = {
+            'seg_path': file_path,
+            'seg_type': self._selected_seg_type
+        }
+        self._emit_user_action('load_segmentation', file_data)
 
     def _on_seg_type_selected(self, seg_type_name: str) -> None:
         """
