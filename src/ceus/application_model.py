@@ -88,6 +88,7 @@ class ApplicationModel(BaseModel):
     
     # Additional signals for application-specific events
     image_loaded = pyqtSignal(UltrasoundImage)
+    bmode_image_loaded = pyqtSignal(UltrasoundImage)
     segmentation_loaded = pyqtSignal(CeusSeg)
 
     def __init__(self):
@@ -97,7 +98,10 @@ class ApplicationModel(BaseModel):
         self._scan_loaders: Dict[str, Any] = {}
         self._selected_scan_type: Optional[str] = None
         self._image_data: Optional[UltrasoundImage] = None
+        self._bmode_image_data: Optional[UltrasoundImage] = None
         self._scan_worker: Optional[ScanLoadingWorker] = None
+        self._bmode_scan_worker: Optional[ScanLoadingWorker] = None
+        self._pending_bmode_load: bool = False  # True when B-mode load is in progress
         
         # Segmentation loading state
         self._seg_loaders: Dict[str, Any] = {}
@@ -147,6 +151,11 @@ class ApplicationModel(BaseModel):
     def image_data(self) -> Optional[UltrasoundImage]:
         """Get the currently loaded image data."""
         return self._image_data
+
+    @property
+    def bmode_image_data(self) -> Optional[UltrasoundImage]:
+        """Get the currently loaded B-mode image data."""
+        return self._bmode_image_data
 
     def set_scan_type(self, scan_type_display_name: str) -> bool:
         """
@@ -211,7 +220,7 @@ class ApplicationModel(BaseModel):
     def load_image(self, image_path: str, scan_loader_kwargs: Dict[str, Any] = None) -> None:
         """
         Load scan image data.
-        
+
         Args:
             image_path: Path to image file
             scan_loader_kwargs: Additional loader arguments (optional)
@@ -219,7 +228,12 @@ class ApplicationModel(BaseModel):
         if not self._selected_scan_type:
             self._emit_error("No scan type selected")
             return
-        
+
+        # Reset state for new load cycle
+        self._image_data = None
+        self._bmode_image_data = None
+        self._pending_bmode_load = False
+
         if scan_loader_kwargs is None:
             scan_loader_kwargs = {}
         
@@ -370,16 +384,14 @@ class ApplicationModel(BaseModel):
     def _on_image_loading_complete(self, image_data: UltrasoundImage) -> None:
         """
         Handle completion of scan loading.
-        
+
         Args:
             image_data: Loaded ultrasound image data
         """
-        self._set_loading(False)
-        
         # Check if loading was successful
         if isinstance(image_data, UltrasoundImage):
             self._image_data = image_data
-            
+
             # Print NIfTI information if applicable
             scan_path = getattr(image_data, 'scan_path', '')
             if scan_path and scan_path.lower().endswith(('.nii', '.nii.gz')):
@@ -389,9 +401,14 @@ class ApplicationModel(BaseModel):
                 print(f"Pixel Dimensions: {getattr(image_data, 'pixdim', 'Unknown')}")
                 print(f"Frame Rate: {getattr(image_data, 'frame_rate', 'Unknown')}")
                 print(f"----------------------------------------\n")
-            
+
+            # If B-mode is still loading, wait for it before emitting
+            if self._pending_bmode_load:
+                return
+            self._set_loading(False)
             self.image_loaded.emit(image_data)
         else:
+            self._set_loading(False)
             print(f"DEBUG: Image loading failed - invalid image data:")
             print(f"  - scan_path: {getattr(image_data, 'scan_path', 'Missing')}")
             print(f"  - has pixel_data: {hasattr(image_data, 'pixel_data')}")
@@ -399,7 +416,66 @@ class ApplicationModel(BaseModel):
             print(f"  - has intensity: {hasattr(image_data, 'intensities_for_analysis')}")
             print(f"  - intensities_for_analysis is None: {getattr(image_data, 'intensities_for_analysis', None) is None}")
             self._emit_error("Failed to load image data - image loading was unsuccessful")
-    
+
+    def load_bmode_image(self, bmode_path: str, scan_loader_kwargs: Dict[str, Any] = None) -> None:
+        """
+        Load B-mode image data in the background.
+
+        Args:
+            bmode_path: Path to B-mode image file
+            scan_loader_kwargs: Additional loader arguments (optional)
+        """
+        if not self._selected_scan_type:
+            self._emit_error("No scan type selected for B-mode loading")
+            return
+
+        if scan_loader_kwargs is None:
+            scan_loader_kwargs = {}
+
+        if not os.path.exists(bmode_path):
+            self._emit_error(f"B-mode file not found: {bmode_path}")
+            return
+
+        self._pending_bmode_load = True
+
+        # Stop any existing B-mode worker
+        if self._bmode_scan_worker and self._bmode_scan_worker.isRunning():
+            self._bmode_scan_worker.quit()
+            self._bmode_scan_worker.wait()
+
+        self._bmode_scan_worker = ScanLoadingWorker(
+            self._selected_scan_type,
+            bmode_path,
+            scan_loader_kwargs
+        )
+
+        self._bmode_scan_worker.finished.connect(self._on_bmode_loading_complete)
+        self._bmode_scan_worker.error_msg.connect(self._on_bmode_loading_error)
+        self._bmode_scan_worker.start()
+
+    def _on_bmode_loading_complete(self, image_data: UltrasoundImage) -> None:
+        """Handle completion of B-mode image loading."""
+        self._pending_bmode_load = False
+        if isinstance(image_data, UltrasoundImage):
+            self._bmode_image_data = image_data
+            self.bmode_image_loaded.emit(image_data)
+        else:
+            self._emit_error("Failed to load B-mode image data")
+
+        # If CEUS already finished loading, emit image_loaded now
+        if self._image_data is not None:
+            self._set_loading(False)
+            self.image_loaded.emit(self._image_data)
+
+    def _on_bmode_loading_error(self, error_msg: str) -> None:
+        """Handle B-mode loading error — proceed with CEUS only."""
+        self._pending_bmode_load = False
+        self._emit_error(error_msg)
+        # Still allow proceeding with CEUS image if it loaded successfully
+        if self._image_data is not None:
+            self._set_loading(False)
+            self.image_loaded.emit(self._image_data)
+
     # Segmentation Loading Properties and Methods
     @property
     def seg_loaders(self) -> Dict[str, Any]:
@@ -551,7 +627,12 @@ class ApplicationModel(BaseModel):
             self._scan_worker.quit()
             self._scan_worker.wait()
             self._scan_worker = None
-        
+
+        if self._bmode_scan_worker and self._bmode_scan_worker.isRunning():
+            self._bmode_scan_worker.quit()
+            self._bmode_scan_worker.wait()
+            self._bmode_scan_worker = None
+
         if self._seg_worker and self._seg_worker.isRunning():
             self._seg_worker.quit()
             self._seg_worker.wait()

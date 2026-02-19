@@ -133,13 +133,19 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     close_requested = pyqtSignal()
     apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
 
-    def __init__(self, image_data: UltrasoundImage, parent: Optional[QWidget] = None):
+    def __init__(self, image_data: UltrasoundImage, bmode_image_data: Optional[UltrasoundImage] = None, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
         self._ui = Ui_voi_drawer()
         self._image_data = image_data
         self._pix_data = image_data.pixel_data
-        
+
+        # B-mode overlay data
+        self._bmode_image_data = bmode_image_data
+        self._bmode_pix_data = bmode_image_data.pixel_data if bmode_image_data else None
+        self._bmode_alpha = 0.5  # 0.0 = invisible, 1.0 = fully opaque
+        self._ax_sag_cor_bmode_artists = [None, None, None]
+
         # Enhancement parameters
         self._clahe_clip_limit = 1.2
         self._gamma = 1.5
@@ -434,6 +440,17 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         container_layout.addLayout(row1_layout)
         container_layout.addLayout(row2_layout)
 
+        # B-mode alpha slider (only shown when B-mode data is loaded)
+        if self._bmode_pix_data is not None:
+            row3_layout = QHBoxLayout()
+            row3_layout.setSpacing(20)
+            bmode_alpha_col, self.bmode_alpha_slider, self.bmode_alpha_val_lbl = create_enh_column(
+                "B-MODE ALPHA", 0, 100, int(self._bmode_alpha * 100), self._on_bmode_alpha_changed
+            )
+            self.bmode_alpha_val_lbl.setText(f"{self._bmode_alpha:.2f}")
+            row3_layout.addWidget(bmode_alpha_col)
+            container_layout.addLayout(row3_layout)
+
         # Add to the layout below the current slice slider
         self._ui.verticalLayout_2.addWidget(enh_group)
 
@@ -445,6 +462,16 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         for artist in self._ax_sag_cor_plane_artists:
             if artist:
                 artist.set_cmap(new_cmap)
+        self._refresh_frames()
+
+    def _on_bmode_alpha_changed(self, value: int) -> None:
+        """Handle B-mode overlay alpha change."""
+        self._bmode_alpha = value / 100.0
+        if hasattr(self, 'bmode_alpha_val_lbl'):
+            self.bmode_alpha_val_lbl.setText(f"{self._bmode_alpha:.2f}")
+        for artist in self._ax_sag_cor_bmode_artists:
+            if artist is not None:
+                artist.set_alpha(self._bmode_alpha)
         self._refresh_frames()
 
     def _on_clahe_changed(self, value: int) -> None:
@@ -587,13 +614,21 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 mask_arr = self._get_mask_slice(plane_ix)
 
                 current_cmap = philips_cmap if self._use_philips_ceus else 'gray'
-                artist = ax.imshow(slice_arr, cmap=current_cmap, aspect=float(aspect), zorder=1, animated=True) # add vmin and vmax for the 0 - 255 show
+                artist = ax.imshow(slice_arr, cmap=current_cmap, aspect=float(aspect), zorder=1, animated=True)
+
+                # B-mode overlay layer (zorder=2, above CEUS, below masks)
+                if self._bmode_pix_data is not None:
+                    bmode_slice = self._get_bmode_plane_slice(plane_ix)
+                    bmode_artist = ax.imshow(bmode_slice, cmap='gray', aspect=float(aspect),
+                                             zorder=2, animated=True, alpha=self._bmode_alpha)
+                    self._ax_sag_cor_bmode_artists[plane_ix] = bmode_artist
+
                 v_line = ax.axvline(x=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 h_line = ax.axhline(y=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 seg_mask = ax.imshow(mask_arr, zorder=8, aspect=float(aspect), animated=True)
                 roi_plot = ax.plot([], [], c='cyan', lw=1, zorder=9, animated=True)
                 point_scatter = ax.scatter([], [], c='red', s=5, marker='o', zorder=10, animated=True)
-                
+
                 self._ax_sag_cor_plane_artists[plane_ix] = artist
                 self._ax_sag_cor_crosshair_lines[plane_ix] = (v_line, h_line)
                 self._ax_sag_cor_point_scatters[plane_ix] = point_scatter
@@ -631,7 +666,23 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if plane_ix == 0:
             arr = arr.T
         return arr
-    
+
+    def _get_bmode_plane_slice(self, plane_ix: int):
+        """Return 2D numpy slice from B-mode data for given plane index."""
+        if self._bmode_pix_data is None:
+            return None
+        idx = self._get_plane_indices(plane_ix)
+        current_t = self._crosshair_xyzt[3]
+        # Use raw B-mode data (no enhancement) — clamp time index to B-mode range
+        t = min(current_t, self._bmode_pix_data.shape[3] - 1)
+        slice_idx = list(idx[:3])
+        arr = self._bmode_pix_data[tuple(slice_idx + [t])]
+        if arr.ndim != 2:
+            arr = arr.squeeze()
+        if plane_ix == 0:
+            arr = arr.T
+        return arr
+
     def _enhance_volume(self, volume_3d: np.ndarray) -> None:
         """Enhance a 3D image volume using predefined enhancement methods in the backend engine."""
         # Create a temporary UltrasoundImage for the current frame
@@ -698,6 +749,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 try:
                     slice_arr = self._get_plane_slice(plane_ix)
                     self._ax_sag_cor_plane_artists[plane_ix].set_array(slice_arr)
+                    # Update B-mode overlay if present
+                    bmode_artist = self._ax_sag_cor_bmode_artists[plane_ix]
+                    if bmode_artist is not None:
+                        bmode_slice = self._get_bmode_plane_slice(plane_ix)
+                        if bmode_slice is not None:
+                            bmode_artist.set_array(bmode_slice)
                     self._update_crosshair_lines(plane_ix)
                 except Exception as e:
                     self.show_error(f"Plane {plane_ix} update error: {e}")
@@ -707,12 +764,14 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._update_roi_plot(plane_ix)
             self._update_point_scatter(plane_ix)
             self._update_seg_masks(plane_ix)
-            
+
             v_line, h_line = self._ax_sag_cor_crosshair_lines[plane_ix]
             roi_plot = self._ax_sag_cor_roi_plots[plane_ix]
             scatter = self._ax_sag_cor_point_scatters[plane_ix]
             mask = self._ax_sag_cor_seg_masks[plane_ix]
             artists = [self._ax_sag_cor_plane_artists[plane_ix]]
+            bmode_artist = self._ax_sag_cor_bmode_artists[plane_ix]
+            if bmode_artist is not None: artists.append(bmode_artist)
             if v_line: artists.append(v_line)
             if h_line: artists.append(h_line)
             if roi_plot: artists.append(roi_plot[0])

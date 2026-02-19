@@ -40,9 +40,10 @@ class SegLoadingViewCoordinator(QStackedWidget):
     # ============================================================================
 
 
-    def __init__(self, image_data: UltrasoundImage, parent: Optional[QWidget] = None):
+    def __init__(self, image_data: UltrasoundImage, bmode_image_data: Optional[UltrasoundImage] = None, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._image_data = image_data
+        self._bmode_image_data = bmode_image_data
         
         # Widget instances
         self._seg_type_widget: Optional[SegTypeSelectionWidget] = None
@@ -178,7 +179,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
 
     def show_voi_drawing(self) -> None:
         """Show the VOI drawing widget."""
-        self._voi_drawing_widget = DrawVOIWidget(self._image_data)
+        self._voi_drawing_widget = DrawVOIWidget(self._image_data, bmode_image_data=self._bmode_image_data)
 
         # Connect signals to handle user actions
         self._voi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)

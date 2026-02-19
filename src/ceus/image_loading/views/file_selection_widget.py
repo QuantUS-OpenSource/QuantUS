@@ -76,6 +76,8 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         """Connect UI signals to internal handlers."""
         self._ui.choose_image_path_button.clicked.connect(self._on_choose_image_path)
         self._ui.clear_image_path_button.clicked.connect(self._ui.image_path_input.clear)
+        self._ui.choose_bmode_path_button.clicked.connect(self._on_choose_bmode_path)
+        self._ui.clear_bmode_path_button.clicked.connect(self._ui.bmode_path_input.clear)
         self._ui.generate_image_button.clicked.connect(self._on_generate_image)
         self._ui.back_button.clicked.connect(self._on_back_clicked)
     
@@ -122,6 +124,15 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
                 self._ui.image_path_input.setText(dir_name)
         else:
             self._select_file_helper(self._ui.image_path_input, self._file_extensions)
+
+    def _on_choose_bmode_path(self) -> None:
+        """Handle B-mode image file selection."""
+        if self._file_extensions == ["FOLDER"]:
+            dir_name = QFileDialog.getExistingDirectory(self, "Select B-mode Directory")
+            if dir_name:
+                self._ui.bmode_path_input.setText(dir_name)
+        else:
+            self._select_file_helper(self._ui.bmode_path_input, self._file_extensions)
         
     def _on_generate_image(self) -> None:
         """Handle image generation request."""
@@ -160,10 +171,20 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
                     
                     scan_loader_kwargs[option] = value
         
-        self.files_selected.emit({
+        file_data = {
             'image_path': image_path,
             'scan_loader_kwargs': scan_loader_kwargs
-        })
+        }
+
+        # Include B-mode path if provided (optional)
+        bmode_path = self._ui.bmode_path_input.text().strip()
+        if bmode_path:
+            if not os.path.exists(bmode_path):
+                self.show_error(f"B-mode file does not exist: {os.path.basename(bmode_path)}")
+                return
+            file_data['bmode_path'] = bmode_path
+
+        self.files_selected.emit(file_data)
         
     def _on_back_clicked(self) -> None:
         """Handle back button click."""
