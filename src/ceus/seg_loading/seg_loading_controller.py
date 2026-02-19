@@ -31,7 +31,7 @@ class SegmentationLoadingController(BaseController):
             image_data = model.image_data
             if not image_data:
                 raise ValueError("No image loaded in ApplicationModel")
-            view = SegLoadingViewCoordinator(image_data)
+            view = SegLoadingViewCoordinator(image_data, bmode_image_data=model.bmode_image_data)
             
         super().__init__(model, view)
         

@@ -61,7 +61,7 @@ class ImageLoadingController(BaseController):
     def _handle_image_loading(self, load_data: dict) -> None:
         """
         Handle image loading request.
-        
+
         Args:
             load_data: Dictionary with loading parameters
         """
@@ -70,7 +70,15 @@ class ImageLoadingController(BaseController):
                 image_path=load_data['image_path'],
                 scan_loader_kwargs=load_data['scan_loader_kwargs']
             )
-            
+
+            # Load B-mode image if path was provided
+            bmode_path = load_data.get('bmode_path')
+            if bmode_path:
+                self.model.load_bmode_image(
+                    bmode_path=bmode_path,
+                    scan_loader_kwargs=load_data['scan_loader_kwargs']
+                )
+
         except Exception as e:
             print(f"DEBUG: Error in image loading: {e}")
             import traceback
