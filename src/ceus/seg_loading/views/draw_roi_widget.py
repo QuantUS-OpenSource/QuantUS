@@ -20,6 +20,7 @@ from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_roi_ui import Ui_constructRoi
 from engines.ceus.src.data_objs import UltrasoundImage
 from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
+from engines.ceus.src.data_objs.seg import CeusSeg
 
 # Philips CEUS Colormap: Grayscale -> Red -> Yellow
 philips_colors = [
@@ -42,6 +43,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
     
     # Signals for communicating with controller
     segmentation_saved = pyqtSignal(str)  # emit with saved file path
+    segmentation_completed = pyqtSignal(object) # CeusSeg object
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
 
@@ -117,6 +119,8 @@ class DrawROIWidget(QWidget, BaseViewMixin):
             'roi_name_label', 'save_name_input',
             'save_roi_button', 'back_from_save_button',
         ]
+        self._save_objects = self._save_seg_menu_objects
+        
         self._draw_types_objects = [
             'draw_rect_drag_type_button', 'draw_freehand_drag_type_button', 'draw_pts_type_button',
         ]
@@ -133,6 +137,17 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
         # Setup matplotlib canvas for frame preview
         self._setup_matplotlib_canvas()
+        
+        # Add a "Confirm & Review" button programmatically
+        from PyQt6.QtWidgets import QPushButton
+        self.confirm_review_button = QPushButton("Confirm && Review", parent=self)
+        self.confirm_review_button.setMinimumSize(self._ui.save_roi_button.minimumSize())
+        self.confirm_review_button.setMaximumSize(self._ui.save_roi_button.maximumSize())
+        self.confirm_review_button.setStyleSheet(self._ui.save_roi_button.styleSheet())
+        # Position it next to the save button in the layout
+        self._ui.chooseImageButtonsLayout_4.addWidget(self.confirm_review_button)
+        self.confirm_review_button.hide()
+
         self._setup_enhancement_controls()
         
         # Display frame preview
@@ -166,6 +181,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         self._ui.clear_save_folder_button.clicked.connect(self._ui.save_folder_input.clear)
         self._ui.back_from_save_button.clicked.connect(self._show_draw_type_selection)
         self._ui.save_roi_button.clicked.connect(self._on_save_roi)
+        self.confirm_review_button.clicked.connect(self._on_confirm_review_clicked)
             
     def _initialize_frame_preview(self) -> None:
         """Initialize the frame preview with optimized matplotlib setup."""
@@ -740,6 +756,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
     def _hide_save_menu(self) -> None:
         """Hide the save menu."""
+        self.confirm_review_button.hide()
         for obj_name in self._save_seg_menu_objects:
             widget = getattr(self._ui, obj_name, None)
             if widget:
@@ -780,6 +797,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
                 widget.show()
             else:
                 print(f"Warning: Widget '{obj_name}' not found in UI")
+        self.confirm_review_button.show()
 
     def _hide_draw_type_selection(self) -> None:
         """Hide the draw type selection layout."""
@@ -938,3 +956,48 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
         self.segmentation_saved.emit(nii_path)
         print(f"Segmentation saved to: {nii_path}")
+
+    def _on_confirm_review_clicked(self) -> None:
+        """Handle confirmation and transition to formal review screen."""
+
+        # Ensure there is a drawn ROI to confirm
+        if len(self._roi_plot_coords[0]) < 3:
+            self.show_error("Please draw a valid region of interest before confirming.")
+            return
+
+        # Create binary mask from drawn ROI
+        spline = [(self._roi_plot_coords[0][i], self._roi_plot_coords[1][i]) for i in range(len(self._roi_plot_coords[0]))]
+        
+        # Note: self._all_frames shape is [t, y, x] (or similar)
+        # Based on _on_save_roi, it seems to be [t, y, x]
+        mask_2d = Image.new("L", (self._all_frames[self._frame].shape[1], self._all_frames[self._frame].shape[0]), 0)
+        ImageDraw.Draw(mask_2d).polygon(spline, outline=1, fill=1)
+        mask_2d = np.array(mask_2d, dtype=np.uint8)
+
+        # Create CeusSeg object
+        seg_data = CeusSeg()
+        seg_data.seg_name = f"Manual_{self._image_data.scan_name}"
+        
+        # CEUS expects 3D mask (x, y, z)
+        # We need to create a 3D mask where this 2D ROI is on one slice or repeated.
+        # However, for consistency with DrawVOIWidget, we probably want a 3D volume.
+        # If DrawROIWidget is only for a single frame, z_len should match what is expected.
+        x_len, y_len, z_len = self._image_data.pixel_data.shape[:3]
+        seg_mask = np.zeros((x_len, y_len, z_len), dtype=np.uint8)
+        
+        # Translate 2D mask [y, x] to [x, y, z] slice
+        # Assuming the ROI was drawn on a specific slice?
+        # Actually DrawROIWidget seems to be for 2D images or a specific frame.
+        # If the image is 4D [x, y, z, t], maybe it was drawn on the central slice?
+        # Let's assume it was for 2D or we put it on the middle slice of 3D.
+        mid_z = z_len // 2
+        
+        # Handle shape mismatch if any
+        if mask_2d.shape[1] == x_len and mask_2d.shape[0] == y_len:
+            seg_mask[:, :, mid_z] = mask_2d.T
+        
+        seg_data.seg_mask = seg_mask
+        seg_data.pixdim = self._image_data.pixdim[:3]
+        
+        # Emit signal to coordinator
+        self.segmentation_completed.emit(seg_data)

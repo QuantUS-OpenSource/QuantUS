@@ -65,7 +65,10 @@ class SegmentationLoadingController(BaseController):
         elif action_name == 'load_segmentation':
             self._handle_segmentation_loading(action_data)
         elif action_name == 'segmentation_confirmed':
-            pass # Handle confirmation action in the application controller
+            # Ensure the model has the confirmed segmentation data
+            # This is especially important for manually drawn segmentations
+            if action_data:
+                self.model.set_manual_segmentation(action_data)
         else:
             raise ValueError(f"Unknown action: {action_name}")
             

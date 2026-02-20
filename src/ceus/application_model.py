@@ -614,6 +614,19 @@ class ApplicationModel(BaseModel):
         else:
             print(f"DEBUG: Segmentation loading failed - invalid seg data")
             self._emit_error("Failed to load segmentation data")
+
+    def set_manual_segmentation(self, seg_data: CeusSeg) -> None:
+        """
+        Set manually drawn segmentation data.
+        
+        Args:
+            seg_data: Manually drawn segmentation data
+        """
+        if seg_data and hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None:
+            self._seg_data = seg_data
+            self.segmentation_loaded.emit(seg_data)
+        else:
+            self._emit_error("Invalid manual segmentation data")
     
     def cleanup(self) -> None:
         """Clean up resources."""

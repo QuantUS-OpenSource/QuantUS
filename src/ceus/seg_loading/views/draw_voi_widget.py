@@ -4,22 +4,24 @@ Segmentation File Selection Widget for Segmentation Loading
 
 from pathlib import Path
 from typing import Optional, Tuple, List
-import numpy as np
-import nibabel as nib
 from scipy.ndimage import binary_fill_holes, binary_erosion
-import matplotlib.pyplot as plt
-import matplotlib.animation as anim
 from matplotlib.backends.backend_qtagg import FigureCanvas
 from matplotlib.path import Path as Mpl_Path
 from matplotlib.colors import LinearSegmentedColormap
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox, QPushButton
+from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
+
+import numpy as np
+import nibabel as nib
+import matplotlib.pyplot as plt
+import matplotlib.animation as anim
 import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox
-from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
+import traceback
 
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
-from engines.ceus.src.data_objs import UltrasoundImage
+from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
 from .spline import calculateSpline3D, calculateSpline
 from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
 
@@ -99,7 +101,6 @@ class VoiInterpolationWorker(QThread):
             self.finished.emit(voi_mask)
 
         except Exception as e:
-            import traceback
             traceback.print_exc()
             self.error_msg.emit(f"Error interpolating VOI: {e}")
 
@@ -130,6 +131,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     
     # Signals for communicating with controller
     file_selected = pyqtSignal(dict)  # {'seg_path': str, 'seg_type': str}
+    segmentation_completed = pyqtSignal(object) # CeusSeg object
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
 
@@ -177,7 +179,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Per-plane resources (axial, sagittal, coronal)
         self._ax_sag_cor_matplotlib_canvases = [None, None, None]
         self._ax_sag_cor_planes = (None, None, None)
-        self._ax_sag_cor_index_maps = ((0, 1), (2, 1), (2, 0))  # dims that vary per plane
+        self._ax_sag_cor_index_maps = ((0, 1), (2, 1), (0, 2))  # (horiz_dim, vert_dim)
         self._ax_sag_cor_animations = [None, None, None]
         self._ax_sag_cor_plane_artists = [None, None, None]
         self._ax_sag_cor_crosshair_lines = [(None, None), (None, None), (None, None)]
@@ -307,6 +309,17 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._ui.restart_voi_button,
             self._ui.save_voi_button,
         ]
+        
+        # Add a "Confirm & Review" button programmatically
+        self.confirm_review_button = QPushButton("Confirm && Review", parent=self._ui.horizontalLayoutWidget_4)
+        self.confirm_review_button.setMinimumSize(self._ui.save_voi_button.minimumSize())
+        self.confirm_review_button.setMaximumSize(self._ui.save_voi_button.maximumSize())
+        self.confirm_review_button.setStyleSheet(self._ui.save_voi_button.styleSheet())
+        # Move it to a reasonable position - maybe next to save button
+        self.confirm_review_button.setGeometry(self._ui.save_voi_button.geometry().translated(0, 50))
+        self.confirm_review_button.hide()
+        self._voi_decision_widgets.append(self.confirm_review_button)
+
         self._save_voi_widgets = [
             self._ui.back_from_save_button,
             self._ui.dest_folder_label,
@@ -485,22 +498,22 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             
         try:
             pix = self._image_data.pixdim
-            # Index 0: Axial (Plane 0)
+            # Index 0: Axial (Plane 0) -> (Y, X) -> Rows=Y, Cols=X -> dy / dx
             if self._ax_sag_cor_matplotlib_canvases[0]:
                 dx, dy = pix[0], pix[1]
                 aspect = (dy / dx if dx != 0 else 1.0) * self._width_scale_axial
                 self._ax_sag_cor_matplotlib_canvases[0].figure.gca().set_aspect(aspect)
             
-            # Index 1: Sagittal (Plane 1) 
+            # Index 1: Sagittal (Plane 1) -> 90 CW Rotation -> (Y, Z) -> Rows=Y, Cols=Z -> dy / dz
             if self._ax_sag_cor_matplotlib_canvases[1]:
                 dy, dz = pix[1], pix[2]
                 aspect = (dy / dz if dz != 0 else 1.0) * self._width_scale_sagittal
                 self._ax_sag_cor_matplotlib_canvases[1].figure.gca().set_aspect(aspect)
                 
-            # Index 2: Coronal (Plane 2)
+            # Index 2: Coronal (Plane 2) -> (Z, X) -> Rows=Z, Cols=X -> dz / dx
             if self._ax_sag_cor_matplotlib_canvases[2]:
                 dx, dz = pix[0], pix[2]
-                aspect = (dx / dz if dz != 0 else 1.0) * self._width_scale_coronal
+                aspect = (dz / dx if dx != 0 else 1.0) * self._width_scale_coronal
                 self._ax_sag_cor_matplotlib_canvases[2].figure.gca().set_aspect(aspect)
                 
             for canvas in self._ax_sag_cor_matplotlib_canvases:
@@ -612,10 +625,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         
         if arr.ndim != 2:
             arr = arr.squeeze()
-        # Axial plane (index 0) needs transpose for correct orientation
-        if plane_ix == 0:
-            arr = arr.T
-        return arr
+        # All planes need transpose to match (Vertical, Horizontal) orientation.
+        # Sagittal (plane 1) specifically needs a 90 deg clockwise rotation.
+        arr_t = arr.T
+        if plane_ix == 1:
+            return np.rot90(arr_t, k=-1)
+        return arr_t
     
     def _enhance_volume(self, volume_3d: np.ndarray) -> np.ndarray:
         """Enhance a 3D image volume using predefined enhancement methods in the backend engine."""
@@ -635,10 +650,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         """Return RGBA numpy slice for the mask of the given plane index."""
         idx = self._get_plane_indices(plane_ix)[:-1] # no time dimension
         arr = self._roi_masks_overlap[idx]
-        # Mask needs transpose for correct orientation to match the image slice
-        if plane_ix == 0:
-            arr = np.transpose(arr, (1, 0, 2))  # Transpose for axial plane
-        return arr
+        # All planes need transpose to match the image slice orientation.
+        # Sagittal (plane 1) specifically needs a 90 deg clockwise rotation.
+        arr_reg = np.transpose(arr, (1, 0, 2))
+        if plane_ix == 1:
+            return np.rot90(arr_reg, k=-1)
+        return arr_reg
 
     def _get_plane_indices(self, plane_ix: int) -> Tuple[int]:
         """Return a list of indices for the given plane."""
@@ -806,6 +823,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.back_from_save_button.clicked.connect(self._on_back_from_save)
         self._ui.toggle_crosshair_visibility_button.clicked.connect(self._on_toggle_crosshair_visibility)
         self._ui.save_voi_button.clicked.connect(self._on_save_voi_clicked)
+        self.confirm_review_button.clicked.connect(self._on_confirm_review_clicked)
         
         # Configure slice/time controls
         self._ui.cur_slice_slider.setMinimum(0)
@@ -998,6 +1016,27 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._hide_widget_lists([self._voi_decision_widgets])
         self._show_widget_lists([self._save_voi_widgets, self._voi_alpha_widgets])
         self._refresh_frames()
+
+    def _on_confirm_review_clicked(self):
+        """Handle confirmation and transition to formal review screen."""
+        
+        # Create CeusSeg object from current mask
+        seg_data = CeusSeg()
+        seg_data.seg_name = f"Manual_{self._image_data.scan_name}"
+        # Extract the binary mask from the overlap RGBA buffer (red channel > 0)
+        seg_data.seg_mask = (self._roi_masks_overlap[:, :, :, 0] > 0).astype(np.uint8)
+        seg_data.pixdim = self._image_data.pixdim[:3]
+        
+        # Preserve current visualization parameters for the preview step
+        seg_data.clahe_clip_limit = self._clahe_clip_limit
+        seg_data.gamma = self._gamma
+        seg_data.width_scale_axial = self._width_scale_axial
+        seg_data.width_scale_sagittal = self._width_scale_sagittal
+        seg_data.width_scale_coronal = self._width_scale_coronal
+        seg_data.use_philips_ceus = self._use_philips_ceus
+        
+        # Emit signal to coordinator
+        self.segmentation_completed.emit(seg_data)
 
     def _on_export_voi_clicked(self):
         # Show saving label, hide save widgets
