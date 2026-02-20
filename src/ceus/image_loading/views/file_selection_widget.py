@@ -53,6 +53,8 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         self._loading_widgets = [
             self._ui.choose_image_path_button,
             self._ui.clear_image_path_button,
+            self._ui.choose_bmode_path_button,
+            self._ui.clear_bmode_path_button,
             self._ui.generate_image_button,
             self._ui.back_button
         ]
