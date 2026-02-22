@@ -6,7 +6,9 @@ replacing the individual models for each component.
 """
 
 import os
+import numpy as np
 from typing import Dict, Any, Optional, Tuple
+import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from src.qus.mvc.base_model import BaseModel
@@ -201,6 +203,10 @@ class ApplicationModel(BaseModel):
         self._analysis_data: Optional[ParamapAnalysis] = None
         self._analysis_worker: Optional[AnalysisWorker] = None
 
+        # DICOM state
+        self._dicom_image: Optional[np.ndarray] = None
+        self._dicom_file_path: Optional[str] = None
+
         # Visualization state
         self._visualization_types: Dict[str, Any] = {}
         self._visualization_functions: Dict[str, Any] = {}
@@ -262,6 +268,48 @@ class ApplicationModel(BaseModel):
     def image_data(self) -> Optional[UltrasoundRfImage]:
         """Get the currently loaded image data."""
         return self._image_data
+
+    # DICOM Properties and Methods
+    @property
+    def dicom_available(self) -> bool:
+        """Check if DICOM data is available."""
+        return self._dicom_image is not None
+    
+    @property
+    def dicom_image(self) -> Optional[np.ndarray]:
+        """Get the processed DICOM image data."""
+        return self._dicom_image
+        
+    def load_dicom_file(self, dicom_file_path: str) -> bool:
+        """
+        Load a DICOM file using DicomLoader.
+        
+        Args:
+            dicom_file_path: Path to the DICOM file
+            
+        Returns:
+            bool: True if loaded successfully, False otherwise
+        """
+        from src.qus.image_loading.dicom_loader import DicomLoader
+        
+        try:
+            dicom_pixels = DicomLoader.load_dicom_file(dicom_file_path)
+            if dicom_pixels is not None:
+                self._dicom_image = dicom_pixels
+                self._dicom_file_path = dicom_file_path
+                return True
+            return False
+        except Exception as e:
+            self._emit_error(f"Error loading DICOM: {e}")
+            return False
+
+    def get_dicom_data(self) -> dict:
+        """Get processed DICOM data for display."""
+        return {
+            'image': self._dicom_image,
+            'file_path': self._dicom_file_path,
+            'available': self.dicom_available
+        }
 
     def set_scan_type(self, scan_type_display_name: str) -> bool:
         """
@@ -1033,3 +1081,20 @@ class ApplicationModel(BaseModel):
             self._analysis_worker.quit()
             self._analysis_worker.wait()
             self._analysis_worker = None
+
+    def get_numerical_summary(self) -> Dict[str, float]:
+        """Get numerical values to display in visualization screen."""
+        if not self._analysis_data:
+            return {}
+        
+        summary = {}
+
+        for method_name in self._analysis_data.windows[0].results.__dict__.keys():            
+            # Skip results we don't have parametric maps for (e.g. string or array results that are not reduced to a single value)
+            if isinstance(getattr(self._analysis_data.windows[0].results, method_name), (str, list, np.ndarray)):
+                continue
+
+            method_arr = [getattr(window.results, method_name) for window in self._analysis_data.windows if hasattr(window.results, method_name)]
+            summary[f"Av. {method_name.upper()}"] = np.mean(np.array(method_arr))
+
+        return summary
