@@ -6,20 +6,30 @@ from pathlib import Path
 from typing import Optional, Tuple, List
 import numpy as np
 import nibabel as nib
-from scipy.ndimage import binary_fill_holes, binary_erosion
+from scipy.ndimage import binary_fill_holes
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 from matplotlib.backends.backend_qtagg import FigureCanvas
 from matplotlib.path import Path as Mpl_Path
+from matplotlib.colors import LinearSegmentedColormap
 import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox
 from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
 
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
 from .spline import calculateSpline3D, calculateSpline
+
+# Philips CEUS Colormap: Grayscale -> Red -> Yellow
+philips_colors = [
+    (0.0, 0.0, 0.0),    # 0% - Black
+    (0.4, 0.4, 0.4),    # 40% - Gray
+    (0.8, 0.0, 0.0),    # 80% - Red
+    (1.0, 1.0, 0.0)     # 100% - Yellow
+]
+philips_cmap = LinearSegmentedColormap.from_list("philips_ceus", philips_colors)
 
 def _smooth_3d_mask(mask: np.ndarray) -> np.ndarray:
     """Apply 3D smoothing to the binary mask."""
@@ -121,6 +131,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     file_selected = pyqtSignal(dict)  # {'seg_path': str, 'seg_type': str}
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
+    apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
 
     def __init__(self, image_data: UltrasoundImage, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
@@ -128,6 +139,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui = Ui_voi_drawer()
         self._image_data = image_data
         self._pix_data = image_data.pixel_data
+        
+        # Enhancement parameters
+        self._clahe_clip_limit = 1.2
+        self._gamma = 1.5
+        self._width_scale_axial = 1.0
+        self._width_scale_sagittal = 1.0
+        self._width_scale_coronal = 1.0
+        self._use_philips_ceus = False
+        
+        # Cache for enhanced volume
+        self._enhanced_cache = None
+        self._enhanced_cache_frame = -1
 
         # State collections
         self._drawing_widgets = []
@@ -173,6 +196,15 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._connect_signals()
         self._connect_matplotlib_events()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._update_scan_display() # Initial UI update
+        self._refresh_frames()      # Mark all planes for first update
+
+    def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
+        """Update the displayed image data, e.g. after preprocessing."""
+        assert enhanced_frame.shape[:-1] == self._pix_data.shape[:-1], "Enhanced pixel data must have the same shape as original"
+        self._enhanced_cache = enhanced_frame[:, :, :, 0]  # Store only the current time frame in cache
+        self._enhanced_cache_frame = frame
+        self._refresh_frames()
 
     # ======================= Matplotlib Mouse Interaction ===================
     def _connect_matplotlib_events(self):
@@ -302,11 +334,206 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         self._ui.scan_name_input.setText(self._image_data.scan_name)
         self._ui.toggle_crosshair_visibility_button.setText('Hide Crosshair')
+        self._ui.cur_slice_label.setText("Current Frame:")
 
         self._ui.interp_loading_label.hide(); self._ui.saving_voi_label.hide()
         self._ui.navigating_label.hide(); self._ui.undo_last_roi_button.hide()
         self._hide_widget_lists([self._voi_decision_widgets, 
                                  self._save_voi_widgets, self._voi_alpha_widgets])
+                                 
+        # Setup enhancement controls in sidebar
+        self._setup_enhancement_controls()
+
+    def _setup_enhancement_controls(self) -> None:
+        """Add enhancement sliders to the sidebar, styled like the existing slice slider."""
+        # Container frame for enhancement controls
+        enh_group = QFrame()
+        enh_group.setStyleSheet("background-color: rgba(255, 255, 255, 0); border: none;")
+        
+        # Main vertical layout to stack rows
+        container_layout = QVBoxLayout(enh_group)
+        container_layout.setContentsMargins(0, 10, 0, 10)
+        container_layout.setSpacing(15)
+
+        # Rows for horizontal grouping
+        row1_layout = QHBoxLayout()
+        row2_layout = QHBoxLayout()
+        row1_layout.setSpacing(20)
+        row2_layout.setSpacing(20)
+
+        # Helper to create a styled slider column
+        def create_enh_column(label_text, min_val, max_val, current_val, callback):
+            col_widget = QWidget()
+            col_layout = QVBoxLayout(col_widget)
+            col_layout.setContentsMargins(0, 0, 0, 0)
+            col_layout.setSpacing(5)
+            
+            # Label
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet("font-size: 14px; color: white; font-weight: bold;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            col_layout.addWidget(lbl)
+            
+            # Slider + Value Row
+            row_layout = QHBoxLayout()
+            
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(min_val, max_val)
+            slider.setValue(current_val)
+            # Copy style and size constraints from slice slider if possible
+            slider.setStyleSheet(self._ui.cur_slice_slider.styleSheet())
+            slider.setMinimumWidth(100)
+            slider.setMaximumWidth(120)
+            slider.valueChanged.connect(callback)
+            
+            val_lbl = QLabel(f"{current_val/10.0:.1f}")
+            val_lbl.setMinimumWidth(40)
+            val_lbl.setStyleSheet("color: #3498db; font-weight: bold; font-size: 14px;")
+            
+            row_layout.addWidget(slider)
+            row_layout.addWidget(val_lbl)
+            col_layout.addLayout(row_layout)
+            
+            return col_widget, slider, val_lbl
+
+        # Create the columns
+        clahe_col, self.clahe_slider, self.clahe_val_lbl = create_enh_column(
+            "CLAHE", 1, 100, int(self._clahe_clip_limit * 10), self._on_clahe_changed
+        )
+        gamma_col, self.gamma_slider, self.gamma_val_lbl = create_enh_column(
+            "GAMMA", 1, 40, int(self._gamma * 10), self._on_gamma_changed
+        )
+        width_ax_col, self.width_ax_slider, self.width_ax_val_lbl = create_enh_column(
+            "WIDTH (AX)", 1, 50, int(self._width_scale_axial * 10), self._on_width_axial_changed
+        )
+        width_sag_col, self.width_sag_slider, self.width_sag_val_lbl = create_enh_column(
+            "WIDTH (SAG)", 1, 50, int(self._width_scale_sagittal * 10), self._on_width_sagittal_changed
+        )
+        width_cor_col, self.width_cor_slider, self.width_cor_val_lbl = create_enh_column(
+            "WIDTH (COR)", 1, 50, int(self._width_scale_coronal * 10), self._on_width_coronal_changed
+        )
+        
+        row1_layout.addWidget(clahe_col)
+        row1_layout.addWidget(gamma_col)
+        
+        # Philips CEUS Toggle (Pseudocoloring) - now in row 1
+        self.philips_check = QCheckBox("Pseudocoloring")
+        self.philips_check.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
+        self.philips_check.setToolTip("Philips CEUS Style:\n"
+                                     "Black → Low Intensity\n"
+                                     "Gray → Tissue Background\n"
+                                     "Red → Medium Enhancement\n"
+                                     "Yellow → Peak Enhancement")
+        self.philips_check.stateChanged.connect(self._on_philips_toggled)
+        row1_layout.addWidget(self.philips_check)
+
+        row2_layout.addWidget(width_ax_col)
+        row2_layout.addWidget(width_sag_col)
+        row2_layout.addWidget(width_cor_col)
+        
+        container_layout.addLayout(row1_layout)
+        container_layout.addLayout(row2_layout)
+
+        # Add to the layout below the current slice slider
+        self._ui.verticalLayout_2.addWidget(enh_group)
+
+    def _on_philips_toggled(self, state: int) -> None:
+        """Handle Philips CEUS pseudocolor toggle."""
+        self._use_philips_ceus = state == Qt.CheckState.Checked.value
+        # Update colormap on all artists
+        new_cmap = philips_cmap if self._use_philips_ceus else 'gray'
+        for artist in self._ax_sag_cor_plane_artists:
+            if artist:
+                artist.set_cmap(new_cmap)
+        self._refresh_frames()
+
+    def _on_clahe_changed(self, value: int) -> None:
+        """Handle CLAHE clip limit change."""
+        self._clahe_clip_limit = value / 10.0
+        if hasattr(self, 'clahe_val_lbl'):
+            self.clahe_val_lbl.setText(f"{self._clahe_clip_limit:.1f}")
+        self._invalidate_enhancement_cache()
+
+    def _on_gamma_changed(self, value: int) -> None:
+        """Handle gamma change."""
+        self._gamma = value / 10.0
+        if hasattr(self, 'gamma_val_lbl'):
+            self.gamma_val_lbl.setText(f"{self._gamma:.1f}")
+        self._invalidate_enhancement_cache()
+
+    def _on_width_axial_changed(self, value: int) -> None:
+        """Handle axial width scale change."""
+        self._width_scale_axial = value / 10.0
+        if hasattr(self, 'width_ax_val_lbl'):
+            self.width_ax_val_lbl.setText(f"{self._width_scale_axial:.1f}")
+        self._update_aspect_ratios()
+        self._refresh_frames()
+
+    def _on_width_sagittal_changed(self, value: int) -> None:
+        """Handle sagittal width scale change."""
+        self._width_scale_sagittal = value / 10.0
+        if hasattr(self, 'width_sag_val_lbl'):
+            self.width_sag_val_lbl.setText(f"{self._width_scale_sagittal:.1f}")
+        self._update_aspect_ratios()
+        self._refresh_frames()
+
+    def _on_width_coronal_changed(self, value: int) -> None:
+        """Handle coronal width scale change."""
+        self._width_scale_coronal = value / 10.0
+        if hasattr(self, 'width_cor_val_lbl'):
+            self.width_cor_val_lbl.setText(f"{self._width_scale_coronal:.1f}")
+        self._update_aspect_ratios()
+        self._refresh_frames()
+
+    def _update_aspect_ratios(self) -> None:
+        """Update the aspect ratios of the axes based on the plane-specific width scales."""
+        if not hasattr(self, '_image_data') or self._image_data is None:
+            return
+            
+        try:
+            pix = self._image_data.pixdim
+            # Index 0: Axial (Plane 0)
+            if self._ax_sag_cor_matplotlib_canvases[0]:
+                dx, dy = pix[0], pix[1]
+                aspect = (dy / dx if dx != 0 else 1.0) * self._width_scale_axial
+                fig0 = self._ax_sag_cor_matplotlib_canvases[0].figure
+                if fig0.axes:
+                    fig0.axes[0].set_aspect(aspect)
+            
+            # Index 1: Sagittal (Plane 1) 
+            if self._ax_sag_cor_matplotlib_canvases[1]:
+                dy, dz = pix[1], pix[2]
+                aspect = (dy / dz if dz != 0 else 1.0) * self._width_scale_sagittal
+                fig1 = self._ax_sag_cor_matplotlib_canvases[1].figure
+                if fig1.axes:
+                    fig1.axes[0].set_aspect(aspect)
+                
+            # Index 2: Coronal (Plane 2)
+            if self._ax_sag_cor_matplotlib_canvases[2]:
+                dx, dz = pix[0], pix[2]
+                aspect = (dx / dz if dz != 0 else 1.0) * self._width_scale_coronal
+                fig2 = self._ax_sag_cor_matplotlib_canvases[2].figure
+                if fig2.axes:
+                    fig2.axes[0].set_aspect(aspect)
+                
+            for canvas in self._ax_sag_cor_matplotlib_canvases:
+                if canvas:
+                    canvas.draw_idle()
+        except Exception as e:
+            print(f"Error updating aspect ratios: {e}")
+        
+    def _reset_enhancement(self, _=None) -> None:
+        """Reset enhancement parameters to defaults."""
+        self.clahe_slider.setValue(12)  # 1.2
+        self.gamma_slider.setValue(15)  # 1.5
+        self.width_ax_slider.setValue(10)   # 1.0
+        self.width_sag_slider.setValue(10)  # 1.0
+        self.width_cor_slider.setValue(10)  # 1.0
+        
+    def _invalidate_enhancement_cache(self) -> None:
+        """Invalidate the cache and trigger a refresh of all planes."""
+        self._enhanced_cache = None
+        self._refresh_frames()
 
     def _setup_matplotlib_canvases(self):
         """Setup matplotlib canvases for high-performance plane display."""
@@ -335,23 +562,32 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 continue
             try:
                 fig = canvas.figure
-                if plane_ix == 0:  # Axial: y vs x
-                    aspect = (self._image_data.pixdim[0]) / (self._image_data.pixdim[1]) if self._image_data.pixdim[0] != 0 else 1
-                elif plane_ix == 1:  # Sagittal: y vs z
-                    aspect = (self._image_data.pixdim[2]) / (self._image_data.pixdim[1]) if self._image_data.pixdim[2] != 0 else 1
-                elif plane_ix == 2:  # Coronal: x vs z
-                    aspect = (self._image_data.pixdim[2]) / (self._image_data.pixdim[0]) if self._image_data.pixdim[2] != 0 else 1
+                if plane_ix == 0:  # Axial
+                    dy = self._image_data.pixdim[1]
+                    dx = self._image_data.pixdim[0]
+                    base_aspect = dy / dx if dx != 0 else 1
+                    aspect = base_aspect * self._width_scale_axial
+                elif plane_ix == 1:  # Sagittal
+                    dy = self._image_data.pixdim[1]
+                    dz = self._image_data.pixdim[2]
+                    base_aspect = dy / dz if dz != 0 else 1
+                    aspect = base_aspect * self._width_scale_sagittal
+                elif plane_ix == 2:  # Coronal
+                    dx = self._image_data.pixdim[0]
+                    dz = self._image_data.pixdim[2]
+                    base_aspect = dx / dz if dz != 0 else 1
+                    aspect = base_aspect * self._width_scale_coronal
                 else:
                     self.show_error(f"Invalid plane index: {plane_ix}")
-                
                 fig.clear()
                 ax = fig.add_subplot(111)
                 ax.axis('off')
                 # Get initial slice
-                slice_arr = self._get_plane_slice(plane_ix)
+                slice_arr = self._get_plane_slice(plane_ix, initializing=True)
                 mask_arr = self._get_mask_slice(plane_ix)
 
-                artist = ax.imshow(slice_arr, cmap='gray', aspect=float(aspect), zorder=1, animated=True)
+                current_cmap = philips_cmap if self._use_philips_ceus else 'gray'
+                artist = ax.imshow(slice_arr, cmap=current_cmap, aspect=float(aspect), zorder=1, animated=True) # add vmin and vmax for the 0 - 255 show
                 v_line = ax.axvline(x=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 h_line = ax.axhline(y=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 seg_mask = ax.imshow(mask_arr, zorder=8, aspect=float(aspect), animated=True)
@@ -369,16 +605,62 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             except Exception as e:
                 self.show_error(f"Error initializing plane display {plane_ix}: {e}")
 
-    def _get_plane_slice(self, plane_ix: int):
+    def _get_plane_slice(self, plane_ix: int, initializing=False):
         """Return 2D numpy slice for given plane index based on current crosshair."""
         idx = self._get_plane_indices(plane_ix)
-        arr = self._pix_data[idx]
+        current_t = self._crosshair_xyzt[3]
+        
+        # Check if we need to enhance a new frame
+        if not initializing and (self._enhanced_cache is None or self._enhanced_cache_frame != current_t):
+            # Get the 3D volume for current time frame
+            current_frame_3d = self._pix_data[:, :, :, current_t]
+            
+            # Enhance the entire 3D volume ONCE per frame
+            self._enhance_volume(current_frame_3d) # performs enhancement SYNCHRONOUSLY
+            self._enhanced_cache_frame = current_t
+        elif initializing:
+            self._enhanced_cache = self._image_data.pixel_data[:, :, :, current_t]  # Cache the initial frame without enhancement for faster startup
+        
+        # Extract the 2D slice from cached enhanced volume
+        slice_idx = list(idx[:3])  # Remove time dimension
+        arr = self._enhanced_cache[tuple(slice_idx)]
+        
         if arr.ndim != 2:
             arr = arr.squeeze()
         # Axial plane (index 0) needs transpose for correct orientation
         if plane_ix == 0:
             arr = arr.T
         return arr
+    
+    def _enhance_volume(self, volume_3d: np.ndarray) -> None:
+        """Enhance a 3D image volume using predefined enhancement methods in the backend engine."""
+        # Create a temporary UltrasoundImage for the current frame
+        temp_im = UltrasoundImage(self._image_data.scan_path)
+        temp_im.pixel_data = volume_3d.T[None].T.copy()  # Add back time dimension for processing
+        temp_im.pixdim = self._image_data.pixdim
+        temp_im.frame_rate = self._image_data.frame_rate
+
+        clahe_preproc_dict = {
+            'name': 'enhance_clahe',
+            'image_data': temp_im,
+            'frame_ix': self._crosshair_xyzt[3],
+            'kwargs': {
+                'clip_limit': self._clahe_clip_limit,
+                'tile_grid_size': (8, 8),
+            }
+        }
+
+        gamma_preproc_dict = {
+            'name': 'enhance_gamma',
+            'image_data': None,  # signal to reuse the already CLAHE-enhanced image (all preprocs in the same batch share the same image input)
+            'frame_ix': self._crosshair_xyzt[3],
+            'kwargs': {
+                'gamma': self._gamma,
+            }
+        }
+
+        preproc_dicts = [clahe_preproc_dict, gamma_preproc_dict]
+        self.apply_preprocs_preview.emit(preproc_dicts) # synchronous call to apply the enhancements and update the cache via the connected slot
 
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
@@ -437,9 +719,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             if scatter: artists.append(scatter)
             if mask: artists.append(mask)
 
-            # Only update frame counters occasionally or when pending refreshed
-            if self._ax_sag_cor_pending[plane_ix]:
-                self._update_scan_display()
             return artists
 
         self._ax_sag_cor_animations[plane_ix] = anim.FuncAnimation(
@@ -497,6 +776,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if [cx, cy, cz, ct] != self._crosshair_xyzt:
             self._crosshair_xyzt = [cx, cy, cz, ct]
             self._refresh_frames()
+            self._update_scan_display()
         return cx, cy, cz, ct
     
     def _update_seg_masks(self, plane_ix):
@@ -558,10 +838,34 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.toggle_crosshair_visibility_button.clicked.connect(self._on_toggle_crosshair_visibility)
         self._ui.save_voi_button.clicked.connect(self._on_save_voi_clicked)
         
+        # Configure slice/time controls
         self._ui.cur_slice_slider.setMinimum(0)
         self._ui.cur_slice_slider.setMaximum(max(0, self._num_slices - 1))
         self._ui.cur_slice_slider.setValue(self._crosshair_xyzt[3])
         self._ui.cur_slice_slider.valueChanged.connect(self._on_time_slider_changed)
+
+        # Configure spin box for frame-based navigation
+        self._ui.cur_slice_spin_box.setRange(1, self._num_slices)
+        self._ui.cur_slice_spin_box.setSingleStep(1)
+        self._ui.cur_slice_spin_box.setDecimals(0)
+        self._ui.cur_slice_spin_box.setValue(self._crosshair_xyzt[3] + 1)
+        self._ui.cur_slice_spin_box.valueChanged.connect(self._on_time_spin_box_changed)
+
+        # Set initial total frames for all planes
+        self._ui.ax_total_frames.setText(str(self._z_len))
+        self._ui.sag_total_frames.setText(str(self._x_len))
+        self._ui.cor_total_frames.setText(str(self._y_len))
+        self._ui.cur_slice_total.setText(str(self._num_slices))
+
+    def _on_time_spin_box_changed(self, value: float):
+        """Handle user changing the time spin box."""
+        frame_idx = int(value) - 1
+        
+        # Clamp to valid range
+        frame_idx = max(0, min(self._num_slices - 1, frame_idx))
+        
+        if self._ui.cur_slice_slider.value() != frame_idx:
+            self._ui.cur_slice_slider.setValue(frame_idx)
 
     def _on_time_slider_changed(self, value: int):  # type: ignore
         """Handle user sliding through time dimension (t)."""
@@ -769,6 +1073,21 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.ax_frame_num.setText(str(self._crosshair_xyzt[2] + 1))
         self._ui.sag_frame_num.setText(str(self._crosshair_xyzt[0] + 1))
         self._ui.cor_frame_num.setText(str(self._crosshair_xyzt[1] + 1))
+
+        # Update total frame labels
+        self._ui.ax_total_frames.setText(str(self._z_len))
+        self._ui.sag_total_frames.setText(str(self._x_len))
+        self._ui.cor_total_frames.setText(str(self._y_len))
+
+        # Update current slice/frame display
+        current_t = self._crosshair_xyzt[3]
+        
+        # Block signals to avoid feedback loop
+        self._ui.cur_slice_spin_box.blockSignals(True)
+        self._ui.cur_slice_spin_box.setValue(current_t + 1)
+        self._ui.cur_slice_spin_box.blockSignals(False)
+        
+        self._ui.cur_slice_total.setText(str(self._num_slices))
 
     def mousePressEvent(self, a0):
         super().mousePressEvent(a0)
