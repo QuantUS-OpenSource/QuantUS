@@ -11,8 +11,9 @@ import matplotlib.animation as anim
 from scipy import interpolate
 from PIL import Image, ImageDraw
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from shapely.geometry import Polygon
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QMessageBox
 from PyQt6.QtCore import pyqtSignal, Qt
 
 from ...mvc.base_view import BaseViewMixin
@@ -354,13 +355,15 @@ class DrawROIWidget(QWidget, BaseViewMixin):
     def _on_draw_pts(self) -> None:
         """Handle freehand points drawing button click."""
         self._show_draw_pts()
-        self._roi_scatter_coords = np.empty((2, 0)); self._roi_plot_coords = [(), ()]
+        self._roi_scatter_coords = ([], []) # Initialize as lists for easy .pop()
+        self._roi_plot_coords = [(), ()]
         self._drawing = True
         self._update_drawing_status()
 
         def draw_cur_roi():
             if len(self._roi_scatter_coords[0]):
-                x = self._roi_scatter_coords[0]; y = self._roi_scatter_coords[1]
+                x = self._roi_scatter_coords[0]
+                y = self._roi_scatter_coords[1]
                 self._roi_scattering_active = True
                 if len(x) > 1:
                     x_interp, y_interp = self._calculate_spline(x, y)
@@ -369,11 +372,20 @@ class DrawROIWidget(QWidget, BaseViewMixin):
                     self._roi_plot_coords = [(), ()]
             else:
                 self._roi_plot_coords = [(), ()]
-            self._frame_update_pending = True # Trigger redraw
+            self._frame_update_pending = True
             
         def close_roi():
-            if self._drawing and len(self._roi_scatter_coords[0]) > 1:
-                self._roi_scatter_coords[0].append(self._roi_scatter_coords[0][0])  # Close the path
+            if not self._drawing or len(self._roi_scatter_coords[0]) < 3:
+                self._show_ui_error("Invalid ROI", "You need at least 3 points to close the ROI.")
+                return
+
+            is_valid, error_msg = self._validate_polygon(
+                self._roi_scatter_coords[0], 
+                self._roi_scatter_coords[1]
+            )
+
+            if is_valid:
+                self._roi_scatter_coords[0].append(self._roi_scatter_coords[0][0])
                 self._roi_scatter_coords[1].append(self._roi_scatter_coords[1][0])
 
                 x_interp, y_interp = self._calculate_spline(self._roi_scatter_coords[0], self._roi_scatter_coords[1])
@@ -381,7 +393,9 @@ class DrawROIWidget(QWidget, BaseViewMixin):
                 
                 self._drawing = False
                 self._roi_scattering_active = False
-                self._frame_update_pending = True # Trigger redraw
+                self._frame_update_pending = True
+            else:
+                self._show_ui_error("Geometry Error", error_msg)
                 
         def clear_roi():
             self._roi_scatter_coords = np.empty((2, 0)); self._roi_plot_coords = [(), ()]
@@ -389,10 +403,16 @@ class DrawROIWidget(QWidget, BaseViewMixin):
             draw_cur_roi()
 
         def undo_last_pt():
-            if self._drawing and len(self._roi_scatter_coords[0]):
+            """Undo functionality for points mode."""
+            if len(self._roi_scatter_coords[0]) > 0:
                 self._roi_scatter_coords[0].pop()
                 self._roi_scatter_coords[1].pop()
-            if self._drawing:
+                
+                # undoing reopens the drawing
+                if not self._drawing:
+                    self._drawing = True
+                    self._roi_scattering_active = True
+                
                 draw_cur_roi()
 
         def check_point_distance(new_x: float, new_y: float) -> bool:
@@ -543,18 +563,55 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
         def on_release(event):
             self._drawing = False
-            self._roi_scatter_coords[0].append(self._roi_scatter_coords[0][0])
-            self._roi_scatter_coords[1].append(self._roi_scatter_coords[1][0])
+            x_raw = self._roi_scatter_coords[0]
+            y_raw = self._roi_scatter_coords[1]
 
-            x, y = self._roi_scatter_coords
-            x, y = self._calculate_spline(x, y)
-            self._roi_plot_coords = [x, y]
-            self._frame_update_pending = True # Trigger redraw
+            is_valid, error_msg = self._validate_polygon(x_raw, y_raw)
+
+            if is_valid:
+                x_raw.append(x_raw[0])
+                y_raw.append(y_raw[0])
+
+                x, y = self._calculate_spline(x_raw, y_raw)
+                self._roi_plot_coords = [x, y]
+                self._frame_update_pending = True
+            
+            else:
+                self._show_ui_error("ROI Error", error_msg)
+                self._roi_plot_coords = [[], []]
+                self._roi_scatter_coords = np.empty((2, 0))
+                self._frame_update_pending = True
 
         self._cid_press = self._ax.figure.canvas.mpl_connect('button_press_event', on_press)
         self._cid_motion = self._ax.figure.canvas.mpl_connect('motion_notify_event', on_motion)
         self._cid_release = self._ax.figure.canvas.mpl_connect('button_release_event', on_release)
     
+    def _validate_polygon(self, x_coords, y_coords) -> tuple[bool, str]:
+        """
+        Validate the geometry before accepting the ROI.
+        """
+
+        if len(x_coords) < 3:
+            return False, "ROI must have at least 3 points."
+        
+        start_pt = (x_coords[0], y_coords[0])
+        end_pt = (x_coords[-1], y_coords[-1])
+        dist = np.sqrt((start_pt[0]-end_pt[0])**2 + (start_pt[1]-end_pt[1])**2)
+
+        if dist > 25.0:
+            return False, "ROI not closed. Please release closer to your starting point."
+        
+        points = list(zip(x_coords, y_coords))
+        poly = Polygon(points)
+
+        if not poly.is_simple:
+            return False, "The lines have self-intersections."
+        
+        if poly.area < 10.0:
+            return False, "ROI is too small to be valid."
+        
+        return True, ""
+
     def _select_dest_folder(self) -> None:
         """
         Helper method for folder selection dialogs.
@@ -741,6 +798,15 @@ class DrawROIWidget(QWidget, BaseViewMixin):
                 widget.show()
             else:
                 print(f"Warning: Widget '{obj_name}' not found in UI")
+
+    def _show_ui_error(self, title: str, message: str) -> None:
+        """Displays a modal error popup in the UI."""
+        error_dialog = QMessageBox(self)
+        error_dialog.setIcon(QMessageBox.Icon.Critical)
+        error_dialog.setWindowTitle(title)
+        error_dialog.setText(message)
+        error_dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        error_dialog.exec()
 
     def _on_save_roi(self) -> None:
         """Handle saving the drawn ROI as a CeusSeg object."""
