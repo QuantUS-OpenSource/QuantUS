@@ -119,7 +119,6 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
 
             self.addWidget(self._type_selection_widget)
 
-        self._type_selection_widget.set_type_options(analysis_types)
         self.setCurrentWidget(self._type_selection_widget)
         self._type_selection_widget.clear_error()
 

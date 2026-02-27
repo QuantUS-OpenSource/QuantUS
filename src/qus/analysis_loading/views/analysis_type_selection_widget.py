@@ -30,10 +30,10 @@ class AnalysisTypeSelectionWidget(QWidget, BaseViewMixin):
         self.__init_base_view__(parent)
         self._ui = Ui_analysisTypeSelection()
         self._image_data = image_data
-        self._analysis_types = analysis_types
 
         self._setup_ui()
         self._connect_signals()
+        self._set_type_options(analysis_types)
 
     def _setup_ui(self) -> None:
         """Setup the user interface."""
@@ -67,7 +67,7 @@ class AnalysisTypeSelectionWidget(QWidget, BaseViewMixin):
         """Handle back button click."""
         self.back_requested.emit()
 
-    def set_type_options(self, analysis_types: dict) -> None:
+    def _set_type_options(self, analysis_types: dict) -> None:
         """
         Set available analysis types in the dropdown.
         
