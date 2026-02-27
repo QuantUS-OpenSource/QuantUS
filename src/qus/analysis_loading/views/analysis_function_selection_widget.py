@@ -55,7 +55,13 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
         self._ui.image_path_input.setText(self._image_data.scan_name)
         self._ui.phantom_path_input.setText(self._image_data.phantom_name)
 
-        # Update available functions
+        self.set_functions(self._func_names)
+
+    def set_functions(self, func_names: List[str]) -> None:
+        """Update available functions."""
+        self._func_names = func_names
+        self._ui.funcs_list.clear()
+
         for func_name in self._func_names:
             if func_name == "compute_power_spectra":
                 continue  # skip this function for now

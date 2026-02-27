@@ -13,6 +13,7 @@ from PyQt6.QtCore import pyqtSignal
 from src.qus.mvc.base_view import BaseViewMixin
 from .views.analysis_function_selection_widget import AnalysisFunctionSelectionWidget
 from .views.analysis_params_widget import AnalysisParamsWidget
+from .views.analysis_type_selection_widget import AnalysisTypeSelectionWidget
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
 
@@ -49,9 +50,7 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         # Widget instances
         self._function_selection_widget: Optional[AnalysisFunctionSelectionWidget] = None
         self._params_widget: Optional[AnalysisParamsWidget] = None
-
-        # Note: Analysis type selection is now skipped - Paramap is automatically selected
-        # The controller will call show_function_selection directly
+        self._type_selection_widget: Optional[AnalysisTypeSelectionWidget] = None
 
     # ============================================================================
     # CONTROLLER INPUT ROUTING - Route inputs from controller to appropriate widget
@@ -102,6 +101,28 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
     # NAVIGATION METHODS - Methods to show different widgets
     # ============================================================================
 
+    def show_analysis_type_selection(self, analysis_types: Dict) -> None:
+        """
+        Show the analysis type selection widget.
+        
+        Args:
+            analysis_types: Dictionary of analysis types
+        """
+        if self._type_selection_widget is None:
+            self._type_selection_widget = AnalysisTypeSelectionWidget(
+                self._image_data,
+                analysis_types
+            )
+            self._type_selection_widget.analysis_type_selected.connect(self._on_analysis_type_selected)
+            self._type_selection_widget.back_requested.connect(self.back_requested.emit)
+            self._type_selection_widget.close_requested.connect(self.close_requested.emit)
+
+            self.addWidget(self._type_selection_widget)
+
+        self._type_selection_widget.set_type_options(analysis_types)
+        self.setCurrentWidget(self._type_selection_widget)
+        self._type_selection_widget.clear_error()
+
     def show_function_selection(self, available_functions: Dict) -> None:
         """
         Show the analysis function selection widget.
@@ -116,6 +137,8 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
             self._function_selection_widget.back_requested.connect(self._on_function_selection_back)
             self._function_selection_widget.close_requested.connect(self.close_requested.emit)
             self.addWidget(self._function_selection_widget)
+        else:
+            self._function_selection_widget.set_functions(available_functions)
 
         self.setCurrentWidget(self._function_selection_widget)
         self._function_selection_widget.clear_error()
@@ -142,6 +165,15 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
     # EVENT HANDLERS - Handle events from child widgets
     # ============================================================================
 
+    def _on_analysis_type_selected(self, selected_type: str) -> None:
+        """
+        Handle analysis type selection.
+        
+        Args:
+            selected_type: String containing selected analysis type
+        """
+        self._emit_user_action("analysis_type_selected", selected_type)
+
     def _on_functions_selected(self, selected_func_names: List[str]) -> None:
         """
         Handle analysis functions selection.
@@ -162,8 +194,9 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
 
     def _on_function_selection_back(self) -> None:
         """Handle back navigation from function selection."""
-        # Since we skip analysis type selection, go back to the main application flow
-        self.back_requested.emit()
+        # Go back to type selection
+        if self._type_selection_widget:
+            self.setCurrentWidget(self._type_selection_widget)
 
     def _on_params_back(self) -> None:
         """Handle back navigation from parameters configuration."""
