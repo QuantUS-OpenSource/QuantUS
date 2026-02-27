@@ -65,20 +65,7 @@ class AnalysisLoadingController(BaseController):
         """Setup available analysis types and functions in the view."""
         analysis_types, analysis_functions = self._model.get_analysis_types()
         
-        # Automatically select "Paramap" as the analysis type
-        paramap_type = "paramap"
-        if paramap_type in analysis_types:
-            self._selected_analysis_type = paramap_type
-            if self._model.set_analysis_type(paramap_type):
-                # Get available functions for Paramap analysis
-                available_functions = self._model.get_analysis_functions(
-                    paramap_type, self._image_data.spatial_dims)
-                # Skip analysis type selection and go directly to function selection
-                self._view_coordinator.show_function_selection(available_functions)
-            else:
-                self._view_coordinator.show_error("Failed to set Paramap analysis type")
-        else:
-            self._view_coordinator.show_error("Paramap analysis type not available")
+        self._view_coordinator.show_analysis_type_selection(analysis_types)
             
     def _on_user_action(self, action_name: str, action_data: Any) -> None:
         """
@@ -89,7 +76,9 @@ class AnalysisLoadingController(BaseController):
             action_data: Data associated with the action
         """
         
-        if action_name == "analysis_functions_selected":
+        if action_name == "analysis_type_selected":
+            self._handle_analysis_type_selection(action_data)
+        elif action_name == "analysis_functions_selected":
             self._handle_analysis_functions_selection(action_data)
         elif action_name == "analysis_execution_started":
             self._handle_analysis_execution(action_data)
@@ -149,6 +138,28 @@ class AnalysisLoadingController(BaseController):
         
         self._view_coordinator.show_error(error_message)
         self._analysis_running = False
+
+    def _handle_analysis_type_selection(self, selected_type: str) -> None:
+        """
+        Handle analysis type selection.
+        
+        Args:
+            selected_type: String containing selected analysis type
+        """
+        self._selected_analysis_type = selected_type
+
+        if not self._model.set_analysis_type(selected_type):
+            self._view_coordinator.show_error(
+                f"Failed to set analysis type: {selected_type}"
+            )
+            return
+
+        available_functions = self._model.get_analysis_functions(
+            selected_type,
+            self._image_data.spatial_dims
+        )
+
+        self._view_coordinator.show_function_selection(available_functions)
 
     def _handle_analysis_functions_selection(self, selected_func_names: List[str]) -> None:
         """
