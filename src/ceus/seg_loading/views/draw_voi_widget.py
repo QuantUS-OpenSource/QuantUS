@@ -155,8 +155,14 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._use_philips_ceus = False
         
         # Cache for enhanced volume
-        self._enhanced_cache = None
-        self._enhanced_cache_frame = -1
+        # self._enhanced_cache = None
+        # self._enhanced_cache_frame = -1
+        
+        self._frame_cache: Optional[np.ndarray] = None
+        self._frame_cache_t: int = -1
+
+        self._bmode_frame_cache: Optional[np.ndarray] = None  
+        self._bmode_frame_cache_t: int = -1
 
         # State collections
         self._drawing_widgets = []
@@ -207,11 +213,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
         """Update the displayed image data, e.g. after preprocessing."""
-        assert enhanced_frame.shape[:-1] == self._pix_data.shape[:-1], "Enhanced pixel data must have the same shape as original"
-        self._enhanced_cache = enhanced_frame[:, :, :, 0]  # Store only the current time frame in cache
-        self._enhanced_cache_frame = frame
+        self._frame_cache = enhanced_frame[:, :, :, 0] if enhanced_frame.ndim == 4 else enhanced_frame
+        self._frame_cache_t = frame
         self._refresh_frames()
-
+        
     # ======================= Matplotlib Mouse Interaction ===================
     def _connect_matplotlib_events(self):
         """Connect motion and click events on each plane's matplotlib canvas.
@@ -558,8 +563,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self.width_cor_slider.setValue(10)  # 1.0
         
     def _invalidate_enhancement_cache(self) -> None:
-        """Invalidate the cache and trigger a refresh of all planes."""
-        self._enhanced_cache = None
+        """Re-enhance from the cached raw frame without hitting disk again."""
+        if self._frame_cache is not None:
+            self._enhance_volume(np.array(self._pix_data[:, :, :, self._frame_cache_t]))
+        else:
+            self._frame_cache = None  # fallback: next slice will re-decompress
         self._refresh_frames()
 
     def _setup_matplotlib_canvases(self):
@@ -641,42 +649,36 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 self.show_error(f"Error initializing plane display {plane_ix}: {e}")
 
     def _get_plane_slice(self, plane_ix: int, initializing=False):
-        """Return 2D numpy slice for given plane index based on current crosshair."""
-        idx = self._get_plane_indices(plane_ix)
         current_t = self._crosshair_xyzt[3]
-        
-        # Check if we need to enhance a new frame
-        if not initializing and (self._enhanced_cache is None or self._enhanced_cache_frame != current_t):
-            # Get the 3D volume for current time frame
-            current_frame_3d = self._pix_data[:, :, :, current_t]
-            
-            # Enhance the entire 3D volume ONCE per frame
-            self._enhance_volume(current_frame_3d) # performs enhancement SYNCHRONOUSLY
-            self._enhanced_cache_frame = current_t
-        elif initializing:
-            self._enhanced_cache = self._image_data.pixel_data[:, :, :, current_t]  # Cache the initial frame without enhancement for faster startup
-        
-        # Extract the 2D slice from cached enhanced volume
-        slice_idx = list(idx[:3])  # Remove time dimension
-        arr = self._enhanced_cache[tuple(slice_idx)]
-        
+
+        if self._frame_cache is None or self._frame_cache_t != current_t:
+            raw_frame = np.array(self._pix_data[:, :, :, current_t])
+            if initializing:
+                self._frame_cache = raw_frame
+            else:
+                self._enhance_volume(raw_frame)  # sets self._frame_cache via update_enhancement_cache
+            self._frame_cache_t = current_t
+
+        idx = self._get_plane_indices(plane_ix)
+        arr = self._frame_cache[tuple(list(idx[:3]))]
         if arr.ndim != 2:
             arr = arr.squeeze()
-        # Axial plane (index 0) needs transpose for correct orientation
         if plane_ix == 0:
             arr = arr.T
         return arr
 
     def _get_bmode_plane_slice(self, plane_ix: int):
-        """Return 2D numpy slice from B-mode data for given plane index."""
         if self._bmode_pix_data is None:
             return None
+        current_t = min(self._crosshair_xyzt[3], self._bmode_pix_data.shape[3] - 1)
+
+        if self._bmode_frame_cache is None or self._bmode_frame_cache_t != current_t:
+            self._bmode_frame_cache = np.array(self._bmode_pix_data[:, :, :, current_t])
+            self._bmode_frame_cache_t = current_t
+
         idx = self._get_plane_indices(plane_ix)
-        current_t = self._crosshair_xyzt[3]
-        # Use raw B-mode data (no enhancement) — clamp time index to B-mode range
-        t = min(current_t, self._bmode_pix_data.shape[3] - 1)
         slice_idx = list(idx[:3])
-        arr = self._bmode_pix_data[tuple(slice_idx + [t])]
+        arr = self._bmode_frame_cache[tuple(slice_idx)]
         if arr.ndim != 2:
             arr = arr.squeeze()
         if plane_ix == 0:
