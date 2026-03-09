@@ -16,6 +16,7 @@ import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
 from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox
 from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
+from PyQt6.QtWidgets import QPushButton
 
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
@@ -117,6 +118,23 @@ class SaveVoiWorker(QThread):
             self.finished.emit("VOI saved successfully.")
         except Exception as e:
             self.error_msg.emit(str(e))
+            
+class ExportVideoWorker(QThread):
+    """Worker thread for exporting the postprocessed CEUS video and VOI overlay as MP4."""
+    finished = pyqtSignal(str)
+    error_msg = pyqtSignal(str)
+    progress = pyqtSignal(int)  # 0-100
+
+    def __init__(self, parent_widget):
+        super().__init__()
+        self.parent_widget = parent_widget
+
+    def run(self):
+        try:
+            self.parent_widget._export_video(self.progress)
+            self.finished.emit("Video exported successfully.")
+        except Exception as e:
+            self.error_msg.emit(str(e))
 
 
 class DrawVOIWidget(QWidget, BaseViewMixin):
@@ -138,7 +156,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self.__init_base_view__(parent)
         self._ui = Ui_voi_drawer()
         self._image_data = image_data
-        self._pix_data = image_data.pixel_data
 
         # B-mode overlay data
         self._bmode_image_data = bmode_image_data
@@ -147,13 +164,24 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ax_sag_cor_bmode_artists = [None, None, None]
 
         # Enhancement parameters
-        self._clahe_clip_limit = 1.2
-        self._gamma = 1.5
+        # self._clahe_clip_limit = 1.2
+        # self._gamma = 1.5
+        
+        self._p_low_percentile = 4.0
+        self._p_high_percentile = 98.0
+        
+        self._n_ref_frames = 5
+        self._noise_std_multiplier = 0.5
+        self._ceus_p_high_percentile = 100
+        
         self._width_scale_axial = 1.0
         self._width_scale_sagittal = 1.0
         self._width_scale_coronal = 1.0
         self._use_philips_ceus = False
         
+        self._pix_data = image_data.pixel_data  # keep raw data untouched
+        self._ceus_p_low = self._compute_noise_floor(image_data)  # single scalar
+
         # Cache for enhanced volume
         # self._enhanced_cache = None
         # self._enhanced_cache_frame = -1
@@ -211,11 +239,25 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._update_scan_display() # Initial UI update
         self._refresh_frames()      # Mark all planes for first update
 
-    def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
-        """Update the displayed image data, e.g. after preprocessing."""
-        self._frame_cache = enhanced_frame[:, :, :, 0] if enhanced_frame.ndim == 4 else enhanced_frame
-        self._frame_cache_t = frame
-        self._refresh_frames()
+    # def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
+    #     """Update the displayed image data, e.g. after preprocessing."""
+    #     self._frame_cache = enhanced_frame[:, :, :, 0] if enhanced_frame.ndim == 4 else enhanced_frame
+    #     self._frame_cache_t = frame
+    #     self._refresh_frames()
+    
+    def _compute_noise_floor(self, image_data: UltrasoundImage) -> float:
+        """Compute and cache the CEUS noise floor scalar from pre-contrast frames."""
+        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
+        try:
+            funcs = get_im_preproc_funcs()
+            return funcs['compute_ceus_noise_floor'](
+                image_data,
+                n_ref_frames=self._n_ref_frames,
+                noise_std_multiplier=self._noise_std_multiplier,
+            )
+        except Exception as e:
+            print(f"WARNING: compute_ceus_noise_floor failed, defaulting to 0.0: {e}")
+            return 0.0
         
     # ======================= Matplotlib Mouse Interaction ===================
     def _connect_matplotlib_events(self):
@@ -408,12 +450,13 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             return col_widget, slider, val_lbl
 
         # Create the columns
-        clahe_col, self.clahe_slider, self.clahe_val_lbl = create_enh_column(
-            "CLAHE", 1, 100, int(self._clahe_clip_limit * 10), self._on_clahe_changed
+        p_low_col, self.p_low_slider, self.p_low_val_lbl = create_enh_column(
+            "P LOW", 1, 200, int(self._p_low_percentile * 10), self._on_p_low_changed
         )
-        gamma_col, self.gamma_slider, self.gamma_val_lbl = create_enh_column(
-            "GAMMA", 1, 40, int(self._gamma * 10), self._on_gamma_changed
+        p_high_col, self.p_high_slider, self.p_high_val_lbl = create_enh_column(
+            "P HIGH", 500, 999, int(self._p_high_percentile * 10), self._on_p_high_changed
         )
+
         width_ax_col, self.width_ax_slider, self.width_ax_val_lbl = create_enh_column(
             "WIDTH (AX)", 1, 50, int(self._width_scale_axial * 10), self._on_width_axial_changed
         )
@@ -424,8 +467,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             "WIDTH (COR)", 1, 50, int(self._width_scale_coronal * 10), self._on_width_coronal_changed
         )
         
-        row1_layout.addWidget(clahe_col)
-        row1_layout.addWidget(gamma_col)
+        row1_layout.addWidget(p_low_col)
+        row1_layout.addWidget(p_high_col)
         
         # Philips CEUS Toggle (Pseudocoloring) - now in row 1
         self.philips_check = QCheckBox("Pseudocoloring")
@@ -458,6 +501,39 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         # Add to the layout below the current slice slider
         self._ui.verticalLayout_2.addWidget(enh_group)
+        
+        self.export_video_button = QPushButton("Export Video")
+        self.export_video_button.setStyleSheet(
+            "QPushButton { color: white; font-size: 14px; font-weight: bold; "
+            "background: rgb(90, 37, 255); border-radius: 10px; padding: 6px 12px; }"
+            "QPushButton:disabled { background: rgb(100, 100, 100); }"
+        )
+        self.export_video_button.clicked.connect(self._on_export_video_clicked)
+        self._ui.verticalLayout_2.addWidget(self.export_video_button)
+    
+    def _on_export_video_clicked(self) -> None:
+        """Handle export video button click."""
+        if not Path(self._ui.save_folder_input.text()).is_dir():
+            self.show_error("Please select a valid save folder first (use the VOI save panel).")
+            return
+
+        self.export_video_button.setEnabled(False)
+        self.export_video_button.setText("Exporting...")
+
+        self._export_video_worker = ExportVideoWorker(self)
+        self._export_video_worker.finished.connect(self._on_export_video_finished)
+        self._export_video_worker.error_msg.connect(self._on_export_video_error)
+        self._export_video_worker.start()
+
+    def _on_export_video_finished(self, msg: str) -> None:
+        self.export_video_button.setEnabled(True)
+        self.export_video_button.setText("Export Video")
+        print(msg)
+
+    def _on_export_video_error(self, err: str) -> None:
+        self.export_video_button.setEnabled(True)
+        self.export_video_button.setText("Export Video")
+        self.show_error(f"Export failed: {err}")
 
     def _on_philips_toggled(self, state: int) -> None:
         """Handle Philips CEUS pseudocolor toggle."""
@@ -479,18 +555,16 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 artist.set_alpha(self._bmode_alpha)
         self._refresh_frames()
 
-    def _on_clahe_changed(self, value: int) -> None:
-        """Handle CLAHE clip limit change."""
-        self._clahe_clip_limit = value / 10.0
-        if hasattr(self, 'clahe_val_lbl'):
-            self.clahe_val_lbl.setText(f"{self._clahe_clip_limit:.1f}")
+    def _on_p_low_changed(self, value: int) -> None:
+        self._p_low_percentile = value / 10.0
+        if hasattr(self, 'p_low_val_lbl'):
+            self.p_low_val_lbl.setText(f"{self._p_low_percentile:.1f}")
         self._invalidate_enhancement_cache()
 
-    def _on_gamma_changed(self, value: int) -> None:
-        """Handle gamma change."""
-        self._gamma = value / 10.0
-        if hasattr(self, 'gamma_val_lbl'):
-            self.gamma_val_lbl.setText(f"{self._gamma:.1f}")
+    def _on_p_high_changed(self, value: int) -> None:
+        self._p_high_percentile = value / 10.0
+        if hasattr(self, 'p_high_val_lbl'):
+            self.p_high_val_lbl.setText(f"{self._p_high_percentile:.1f}")
         self._invalidate_enhancement_cache()
 
     def _on_width_axial_changed(self, value: int) -> None:
@@ -556,18 +630,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         
     def _reset_enhancement(self, _=None) -> None:
         """Reset enhancement parameters to defaults."""
-        self.clahe_slider.setValue(12)  # 1.2
-        self.gamma_slider.setValue(15)  # 1.5
+        self.p_low_slider.setValue(20)   # 2.0
+        self.p_high_slider.setValue(980)  # 98.0
         self.width_ax_slider.setValue(10)   # 1.0
         self.width_sag_slider.setValue(10)  # 1.0
         self.width_cor_slider.setValue(10)  # 1.0
         
     def _invalidate_enhancement_cache(self) -> None:
-        """Re-enhance from the cached raw frame without hitting disk again."""
-        if self._frame_cache is not None:
-            self._enhance_volume(np.array(self._pix_data[:, :, :, self._frame_cache_t]))
-        else:
-            self._frame_cache = None  # fallback: next slice will re-decompress
+        """Force re-enhancement of current frame on next render."""
+        self._frame_cache = None
+        self._frame_cache_t = -1
+        self._bmode_frame_cache = None
+        self._bmode_frame_cache_t = -1
         self._refresh_frames()
 
     def _setup_matplotlib_canvases(self):
@@ -673,12 +747,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         current_t = min(self._crosshair_xyzt[3], self._bmode_pix_data.shape[3] - 1)
 
         if self._bmode_frame_cache is None or self._bmode_frame_cache_t != current_t:
-            self._bmode_frame_cache = np.array(self._bmode_pix_data[:, :, :, current_t])
+            raw_frame = np.array(self._bmode_pix_data[:, :, :, current_t])
+            self._bmode_frame_cache = self._enhance_bmode_frame(raw_frame)
             self._bmode_frame_cache_t = current_t
 
         idx = self._get_plane_indices(plane_ix)
-        slice_idx = list(idx[:3])
-        arr = self._bmode_frame_cache[tuple(slice_idx)]
+        arr = self._bmode_frame_cache[tuple(list(idx[:3]))]
         if arr.ndim != 2:
             arr = arr.squeeze()
         if plane_ix == 0:
@@ -686,35 +760,48 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         return arr
 
     def _enhance_volume(self, volume_3d: np.ndarray) -> None:
-        """Enhance a 3D image volume using predefined enhancement methods in the backend engine."""
-        # Create a temporary UltrasoundImage for the current frame
-        temp_im = UltrasoundImage(self._image_data.scan_path)
-        temp_im.pixel_data = volume_3d.T[None].T.copy()  # Add back time dimension for processing
-        temp_im.pixdim = self._image_data.pixdim
-        temp_im.frame_rate = self._image_data.frame_rate
+        """Enhance a CEUS 3D frame using noise normalization with cached noise floor."""
+        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
+        try:
+            funcs = get_im_preproc_funcs()
+            temp_im = UltrasoundImage(self._image_data.scan_path)
+            temp_im.pixel_data = volume_3d.T[None].T.copy()  # H x W x Z x 1
+            temp_im.pixdim = self._image_data.pixdim
+            temp_im.frame_rate = self._image_data.frame_rate
 
-        clahe_preproc_dict = {
-            'name': 'enhance_clahe',
-            'image_data': temp_im,
-            'frame_ix': self._crosshair_xyzt[3],
-            'kwargs': {
-                'clip_limit': self._clahe_clip_limit,
-                'tile_grid_size': (8, 8),
-            }
-        }
+            temp_im = funcs['enhance_ceus_noise_norm'](
+                temp_im,
+                p_low=self._ceus_p_low,
+                p_high_percentile=self._ceus_p_high_percentile,
+            )
 
-        gamma_preproc_dict = {
-            'name': 'enhance_gamma',
-            'image_data': None,  # signal to reuse the already CLAHE-enhanced image (all preprocs in the same batch share the same image input)
-            'frame_ix': self._crosshair_xyzt[3],
-            'kwargs': {
-                'gamma': self._gamma,
-            }
-        }
+            self._frame_cache = temp_im.pixel_data[:, :, :, 0]
+            self._frame_cache_t = self._crosshair_xyzt[3]
+        except Exception as e:
+            print(f"WARNING: _enhance_volume failed: {e}")
+            self._frame_cache = volume_3d
+            self._frame_cache_t = self._crosshair_xyzt[3]
+    
+    def _enhance_bmode_frame(self, volume_3d: np.ndarray) -> np.ndarray:
+        """Enhance a B-mode 3D frame using contrast stretching."""
+        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
+        try:
+            funcs = get_im_preproc_funcs()
+            temp_im = UltrasoundImage(self._image_data.scan_path)
+            temp_im.pixel_data = volume_3d.T[None].T.copy() 
+            temp_im.pixdim = self._image_data.pixdim
+            temp_im.frame_rate = self._image_data.frame_rate
 
-        preproc_dicts = [clahe_preproc_dict, gamma_preproc_dict]
-        self.apply_preprocs_preview.emit(preproc_dicts) # synchronous call to apply the enhancements and update the cache via the connected slot
-
+            temp_im = funcs['enhance_bmode_noise'](
+                temp_im,
+                p_low_percentile=self._p_low_percentile,
+                p_high_percentile=self._p_high_percentile,
+            )
+            return temp_im.pixel_data[:, :, :, 0]
+        except Exception as e:
+            print(f"WARNING: _enhance_bmode_frame failed: {e}")
+            return volume_3d
+            
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
         idx = self._get_plane_indices(plane_ix)[:-1] # no time dimension
@@ -1100,6 +1187,153 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._save_worker.finished.connect(self._on_save_voi_finished)
         self._save_worker.error_msg.connect(self._on_save_voi_error)
         self._save_worker.start()
+    
+    def _export_video(self, progress_signal=None) -> None:
+        """Export postprocessed CEUS and B-mode with VOI border overlay as a 2x3 MP4."""
+        import cv2
+        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
+
+        out_folder = self._ui.save_folder_input.text()
+        out_name = Path(self._ui.save_name_input.text() or self._image_data.scan_name or "export").stem
+        if not Path(out_folder).is_dir():
+            raise ValueError("Please select a valid output folder first.")
+
+        out_path = str(Path(out_folder) / f"{out_name}_ceus.mp4")
+        funcs = get_im_preproc_funcs()
+
+        cx, cy, cz = self._crosshair_xyzt[0], self._crosshair_xyzt[1], self._crosshair_xyzt[2]
+
+        # --- Helpers ---
+
+        def _enhance_ceus_frame(raw_3d: np.ndarray) -> np.ndarray:
+            """Enhance a raw CEUS 3D frame, returns H x W x Z uint8."""
+            temp_im = UltrasoundImage(self._image_data.scan_path)
+            temp_im.pixel_data = raw_3d.T[None].T.copy()
+            temp_im.pixdim = self._image_data.pixdim
+            temp_im.frame_rate = self._image_data.frame_rate
+            temp_im = funcs['enhance_ceus_noise_norm'](
+                temp_im, p_low=self._ceus_p_low, p_high_percentile=self._ceus_p_high_percentile
+            )
+            return temp_im.pixel_data[:, :, :, 0]
+
+        def _enhance_bmode_frame_3d(raw_3d: np.ndarray) -> np.ndarray:
+            """Enhance a raw B-mode 3D frame, returns H x W x Z uint8."""
+            temp_im = UltrasoundImage(self._image_data.scan_path)
+            temp_im.pixel_data = raw_3d.T[None].T.copy()
+            temp_im.pixdim = self._image_data.pixdim
+            temp_im.frame_rate = self._image_data.frame_rate
+            temp_im = funcs['enhance_bmode_noise'](
+                temp_im,
+                p_low_percentile=self._p_low_percentile,
+                p_high_percentile=self._p_high_percentile,
+            )
+            return temp_im.pixel_data[:, :, :, 0]
+
+        def _voi_border_2d(mask_2d: np.ndarray) -> np.ndarray:
+            binary = (mask_2d > 0).astype(np.uint8) * 255
+            if not binary.any():
+                return np.zeros_like(binary)
+            edges = cv2.Canny(binary, 100, 200)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+            return cv2.dilate(edges, kernel, iterations=1)
+
+        def _apply_border(gray_2d: np.ndarray, border_2d: np.ndarray) -> np.ndarray:
+            bgr = cv2.cvtColor(gray_2d, cv2.COLOR_GRAY2BGR)
+            bgr[border_2d > 0] = [0, 0, 255]
+            return bgr
+
+        def _resize_to_height(img_bgr: np.ndarray, target_h: int) -> np.ndarray:
+            h, w = img_bgr.shape[:2]
+            if h == 0 or w == 0:
+                return np.zeros((target_h, target_h, 3), dtype=np.uint8)
+            scale = target_h / h
+            new_w = max(1, int(w * scale))
+            return cv2.resize(img_bgr, (new_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+        def _build_row(enhanced_3d: np.ndarray, target_h: int) -> np.ndarray:
+            """Build a 1x3 BGR row (axial | sagittal | coronal) from an enhanced 3D volume."""
+            # Axial: slice at z=cz, transpose to match widget orientation
+            ax_gray  = enhanced_3d[:, :, cz].T
+            ax_mask  = self._roi_masks_overlap[:, :, cz, 0].T
+            # Sagittal: slice at x=cx → (y_len, z_len)
+            sag_gray = enhanced_3d[cx, :, :]
+            sag_mask = self._roi_masks_overlap[cx, :, :, 0]
+            # Coronal: slice at y=cy → (x_len, z_len)
+            cor_gray = enhanced_3d[:, cy, :]
+            cor_mask = self._roi_masks_overlap[:, cy, :, 0]
+
+            panels = []
+            for gray, mask in [(ax_gray, ax_mask), (sag_gray, sag_mask), (cor_gray, cor_mask)]:
+                border = _voi_border_2d(mask)
+                bgr    = _apply_border(gray, border)
+                panels.append(_resize_to_height(bgr, target_h))
+
+            return np.concatenate(panels, axis=1)
+
+        def _add_label(row: np.ndarray, text: str) -> np.ndarray:
+            """Add a text label in the top-left corner of a row."""
+            import cv2
+            labeled = row.copy()
+            cv2.putText(labeled, text, (10, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 2, cv2.LINE_AA)
+            return labeled
+
+        # --- Determine composite dimensions from first frame ---
+
+        sample_ceus_raw   = np.array(self._pix_data[:, :, :, 0])
+        sample_ceus_enh   = _enhance_ceus_frame(sample_ceus_raw)
+        target_h          = sample_ceus_enh[:, :, cz].T.shape[0]
+
+        has_bmode = self._bmode_pix_data is not None
+        if has_bmode:
+            sample_bmode_raw = np.array(self._bmode_pix_data[:, :, :, 0])
+            sample_bmode_enh = _enhance_bmode_frame_3d(sample_bmode_raw)
+            bmode_target_h   = sample_bmode_enh[:, :, cz].T.shape[0]
+        
+        ceus_row_sample  = _build_row(sample_ceus_enh, target_h)
+        comp_w           = ceus_row_sample.shape[1]
+
+        if has_bmode:
+            bmode_row_sample = _build_row(sample_bmode_enh, bmode_target_h)
+            # Match bmode row width to ceus row width
+            if bmode_row_sample.shape[1] != comp_w:
+                bmode_row_sample = cv2.resize(bmode_row_sample, (comp_w, bmode_target_h))
+            comp_h = ceus_row_sample.shape[0] + bmode_row_sample.shape[0]
+        else:
+            comp_h = ceus_row_sample.shape[0]
+
+        fps     = max(1, int(round(1.0 / self._image_data.frame_rate))) if self._image_data.frame_rate else 10
+        fourcc  = cv2.VideoWriter_fourcc(*'mp4v')
+        writer  = cv2.VideoWriter(out_path, fourcc, fps, (comp_w, comp_h))
+
+        # --- Write frames ---
+        try:
+            for t in range(self._num_slices):
+                # CEUS row
+                ceus_raw  = np.array(self._pix_data[:, :, :, t])
+                ceus_enh  = _enhance_ceus_frame(ceus_raw)
+                ceus_row  = _add_label(_build_row(ceus_enh, target_h), "CEUS")
+
+                if has_bmode:
+                    # B-mode: clamp t to available frames
+                    bmode_t   = min(t, self._bmode_pix_data.shape[3] - 1)
+                    bmode_raw = np.array(self._bmode_pix_data[:, :, :, bmode_t])
+                    bmode_enh = _enhance_bmode_frame_3d(bmode_raw)
+                    bmode_row = _build_row(bmode_enh, bmode_target_h)
+                    # Match width before stacking
+                    if bmode_row.shape[1] != comp_w:
+                        bmode_row = cv2.resize(bmode_row, (comp_w, bmode_target_h))
+                    bmode_row = _add_label(bmode_row, "B-mode")
+                    composite = np.concatenate([ceus_row, bmode_row], axis=0)
+                else:
+                    composite = ceus_row
+
+                writer.write(composite)
+
+                if progress_signal:
+                    progress_signal.emit(int((t + 1) / self._num_slices * 100))
+        finally:
+            writer.release()
 
     def _on_save_voi_finished(self, msg):
         self._ui.saving_voi_label.hide()
