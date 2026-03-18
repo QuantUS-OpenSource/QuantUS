@@ -454,14 +454,17 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         """Extract a 2D mask slice for overlay."""
         x, y, z, _ = self._crosshair_xyzt
         if plane_ix == 0:  # Axial (XY) at Z -> show (Y, X)
-            return self._roi_masks_overlap[:, :, z, :].transpose(1, 0, 2)
+            # Match DrawVOIWidget approach: index mask then transpose
+            arr = self._roi_masks_overlap[:, :, z, :]
+            return np.transpose(arr, (1, 0, 2))
         elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
             arr = self._roi_masks_overlap[x, :, :, :]
-            # Consistent with DrawVOIWidget: transpose(1, 0, 2) then rot90(k=-1)
+            # Consistent with DrawVOIWidget: (1, 0, 2) then rot90(k=-1)
             arr_t = np.transpose(arr, (1, 0, 2))
             return np.rot90(arr_t, k=-1)
         elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Z, X)
-            return self._roi_masks_overlap[:, y, :, :].transpose(1, 0, 2)
+            arr = self._roi_masks_overlap[:, y, :, :]
+            return np.transpose(arr, (1, 0, 2))
         return np.zeros((10, 10, 4), dtype=np.uint8)
 
     def _get_enhanced_volume(self, t: int) -> np.ndarray:
