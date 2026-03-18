@@ -17,10 +17,25 @@ def calculateSpline(xpts, ypts, zpts=None):  # 2D spline interpolation
             cv.append([xpts[i], ypts[i], zpts[i]])
         else:
             cv.append([xpts[i], ypts[i]])
+    
+    # Remove duplicate points which cause "ValueError: Invalid inputs" in splprep
     cv = np.array(cv)
-    if len(xpts) == 2:
+    if len(cv) > 1:
+        # Calculate distances between consecutive points
+        diffs = np.diff(cv, axis=0)
+        dists = np.sqrt(np.sum(diffs**2, axis=1))
+        # Keep first point and points that are sufficiently far from the previous one
+        mask = np.concatenate(([True], dists > 1e-5))
+        cv = cv[mask]
+
+    if len(cv) < 2:
+        if zpts is not None:
+            return np.array([cv[0][0]]), np.array([cv[0][1]]), np.array([cv[0][2]])
+        return np.array([cv[0][0]]), np.array([cv[0][1]])
+
+    if len(cv) == 2:
         tck, _ = interpolate.splprep(cv.T, s=0.0, k=1)
-    elif len(xpts) == 3:
+    elif len(cv) == 3:
         tck, _ = interpolate.splprep(cv.T, s=0.0, k=2)
     else:
         tck, _ = interpolate.splprep(cv.T, s=0.0, k=3)
