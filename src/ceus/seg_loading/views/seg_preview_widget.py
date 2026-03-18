@@ -385,13 +385,13 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             slice_data = self._get_plane_slice(i)
             # Use fixed vmin/vmax to prevent auto-scaling contrast per slice
             artist = ax.imshow(slice_data, cmap='gray', interpolation='nearest', 
-                               origin='lower', zorder=1, vmin=0, vmax=255)
+                               zorder=1, vmin=0, vmax=255)
             self._ax_sag_cor_plane_artists[i] = artist
 
             # Mask overlay
             mask_slice = self._get_mask_slice(i)
             mask_artist = ax.imshow(mask_slice, interpolation='nearest', 
-                                    origin='lower', zorder=2)
+                                    zorder=2)
             self._ax_sag_cor_seg_masks[i] = mask_artist
 
             # Crosshair lines
@@ -411,7 +411,9 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         if plane_ix == 0:  # Axial (XY) at Z -> show (Y, X)
             return vol[:, :, z].T
         elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
-            return np.rot90(vol[x, :, :].T, k=-1)
+            arr = vol[x, :, :]
+            arr_t = arr.T
+            return np.rot90(arr_t, k=-1)
         elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Z, X)
             return vol[:, y, :].T
         return np.zeros((10, 10))
@@ -422,8 +424,9 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         if plane_ix == 0:  # Axial (XY) at Z -> show (Y, X)
             return self._roi_masks_overlap[:, :, z, :].transpose(1, 0, 2)
         elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
-            arr = self._roi_masks_overlap[x, :, :, :].transpose(1, 0, 2)
-            return np.rot90(arr, k=-1)
+            arr = self._roi_masks_overlap[x, :, :, :]
+            arr_t = np.transpose(arr, (1, 0, 2))
+            return np.rot90(arr_t, k=-1)
         elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Z, X)
             return self._roi_masks_overlap[:, y, :, :].transpose(1, 0, 2)
         return np.zeros((10, 10, 4), dtype=np.uint8)
