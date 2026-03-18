@@ -650,8 +650,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         """Return RGBA numpy slice for the mask of the given plane index."""
         idx = self._get_plane_indices(plane_ix)[:-1] # no time dimension
         arr = self._roi_masks_overlap[idx]
-        # All planes need transpose to match the image slice orientation.
-        # Sagittal (plane 1) specifically needs a 90 deg clockwise rotation.
+        
+        # Consistent mapping for all planes as areas:
+        # Axial: (X, Y) slice -> want (Y, X) for imshow -> transpose (1, 0, 2)
+        # Sagittal: (Y, Z) slice -> want (Z, Y) then rot -> transpose (1, 0, 2) + rot90
+        # Coronal: (X, Z) slice -> want (Z, X) for imshow -> transpose (1, 0, 2)
+        
         arr_reg = np.transpose(arr, (1, 0, 2))
         if plane_ix == 1:
             return np.rot90(arr_reg, k=-1)
@@ -935,9 +939,16 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if plane_ix == 0:  # Axial
             target_slice_mask[:, :, fixed_val] = mask_2d.T
         elif plane_ix == 1:  # Sagittal
-            target_slice_mask[fixed_val, :, :] = mask_2d
+            # mask_2d from meshgrid (Y_len, X_len) where X_idx=z, Y_idx=y
+            # In sagittal plane_ix=1: vary_x=z(2), vary_y=y(1). fixed=x(0)
+            # mask_2d shape is (y_len, z_len).
+            # Meshgrid with 'xy' returns (rows=Y, cols=X), so mask_2d is (Y, Z).
+            # The display uses rot90(arr.T, k=-1) which is (Z, Y).
+            # To match the display, we must rot90 back: rot90(mask_2d, k=1).T
+            target_slice_mask[fixed_val, :, :] = np.rot90(mask_2d, k=1).T
         elif plane_ix == 2:  # Coronal
-            target_slice_mask[:, fixed_val, :] = mask_2d
+            # mask_2d from meshgrid (Y_len, X_len) where X_idx=x, Y_idx=z
+            target_slice_mask[:, fixed_val, :] = mask_2d.T
 
         # Apply colors to the RGBA mask where the 3D mask is true
         current_roi_mask_rgba[target_slice_mask, 0] = 255  # Red
@@ -1209,28 +1220,25 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _on_interpolate_voi(self):
         """Handle VOI interpolation from the drawn 2D ROIs."""
-        if len(self._drawn_rois) == 2 or not len(self._drawn_rois):
-            print("At least 3 ROIs on different planes or 1 ROI is required for 3D interpolation.")
+        if len(self._drawn_rois) < 1:
+            print("At least 1 ROI is required for 3D interpolation.")
             return
 
         # Combine all points from all drawn ROIs
         all_points = []
-        for _, pts, _ in self._drawn_rois:
-            xyz_pts = np.array(pts)[:, :3].T
-            x_interp, y_interp, z_interp = calculateSpline(*xyz_pts)
-            all_points.extend(zip(x_interp, y_interp, z_interp))
+        for plane_num, pts, _ in self._drawn_rois:
+            all_points.extend(pts)
 
         # Ensure no duplicate points are used for interpolation
         unique_points = self._remove_duplicates(all_points)
-        if len(unique_points) < 4:
+        if len(unique_points) < 3:
             self.show_error("Interpolation Error", "Not enough unique points for 3D spline interpolation.")
             return
 
         # Perform 3D spline interpolation
-        x_coords, y_coords, z_coords = zip(*unique_points)
-        coords = np.transpose([x_coords, y_coords, z_coords])
+        coords = np.array(unique_points)
         
-        if len(self._drawn_rois) > 2:
+        if len(self._drawn_rois) > 1:
             # Stop any existing worker
             if self._voi_interpolation_worker and self._voi_interpolation_worker.isRunning():
                 self._voi_interpolation_worker.quit()
@@ -1249,22 +1257,14 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._set_interp_loading(True)
             self._voi_interpolation_worker.start()
         else:
+            # Single ROI Case - just fill the area of that single mesh
             voi_mask = np.zeros((self._x_len, self._y_len, self._z_len), dtype=bool)
 
-            # For simplicity, we'll mark the voxels the spline passes through.
-            # A more robust solution would involve filling the volume enclosed by the spline surface.
-            interp_points = np.round(np.array(list(coords))).astype(int)
-
-            # Clamp points to be within bounds
-            interp_points[:, 0] = np.clip(interp_points[:, 0], 0, self._x_len - 1)
-            interp_points[:, 1] = np.clip(interp_points[:, 1], 0, self._y_len - 1)
-            interp_points[:, 2] = np.clip(interp_points[:, 2], 0, self._z_len - 1)
-
-            voi_mask[interp_points[:, 0], interp_points[:, 1], interp_points[:, 2]] = True
+            # For a single ROI, we extract the boolean mask from the stored RGBA mask
+            # The red channel (index 0) is set to 255 for the drawn mask.
+            _, _, roi_mask_rgba = self._drawn_rois[0]
+            voi_mask = roi_mask_rgba[:, :, :, 0] > 0
             
-            # Fill holes in the resulting mask to create a solid volume
-            voi_mask = _smooth_3d_mask(voi_mask)
-            self._hide_widget_lists([self._drawing_widgets])
             self._on_interpolation_finished(voi_mask)
 
     def _save_voi(self):
@@ -1281,13 +1281,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         out_path = Path(self._ui.save_folder_input.text()) / out_name
 
+        # Construct affine matching standard NIfTI orientation
         affine = np.eye(4)
         for i, res in enumerate(self._image_data.pixdim[:3]):
             affine[i, i] = res
-        voi_mask = np.array(self._roi_masks_overlap[:, :, :, 0] / 255.0).astype(np.uint8)
-        niiarray = nib.Nifti1Image(voi_mask, affine)
-        niiarray.header["descrip"] = self._image_data.scan_name
-        nib.save(niiarray, out_path)
+            
+        # Ensure binary mask is correctly extracted from the overlay buffer
+        voi_mask = (self._roi_masks_overlap[:, :, :, 0] > 0).astype(np.uint8)
+        
+        # Save as NIfTI image
+        nii_img = nib.Nifti1Image(voi_mask, affine)
+        nii_img.header["descrip"] = self._image_data.scan_name
+        nib.save(nii_img, out_path)
 
     def _set_interp_loading(self, loading_state: bool) -> None:
         """Set the interpolation loading state."""
