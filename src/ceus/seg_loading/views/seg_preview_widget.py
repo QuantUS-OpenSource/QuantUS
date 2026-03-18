@@ -421,15 +421,16 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
 
             # Mask overlay
             mask_slice = self._get_mask_slice(i)
+            # Match interpolation and zorder to DrawVOIWidget
             mask_artist = ax.imshow(mask_slice, interpolation='nearest', 
-                                    zorder=2)
+                                    zorder=8)
             self._ax_sag_cor_seg_masks[i] = mask_artist
 
             # Crosshair lines
-            h_line = ax.axhline(self._crosshair_xyzt[self._ax_sag_cor_index_maps[i][1]], 
-                                color='cyan', alpha=0.6, lw=0.8, zorder=3)
-            v_line = ax.axvline(self._crosshair_xyzt[self._ax_sag_cor_index_maps[i][0]], 
-                                color='cyan', alpha=0.6, lw=0.8, zorder=3)
+            # Get actual coordinate indices for current plane from maps
+            idx_x, idx_y = self._ax_sag_cor_index_maps[i]
+            v_line = ax.axvline(x=self._crosshair_xyzt[idx_x], color='yellow', lw=0.8, animated=True, zorder=11)
+            h_line = ax.axhline(y=self._crosshair_xyzt[idx_y], color='yellow', lw=0.8, animated=True, zorder=11)
             self._ax_sag_cor_crosshair_lines[i] = (v_line, h_line)
         
         self._update_aspect_ratios()
@@ -456,6 +457,7 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             return self._roi_masks_overlap[:, :, z, :].transpose(1, 0, 2)
         elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
             arr = self._roi_masks_overlap[x, :, :, :]
+            # Consistent with DrawVOIWidget: transpose(1, 0, 2) then rot90(k=-1)
             arr_t = np.transpose(arr, (1, 0, 2))
             return np.rot90(arr_t, k=-1)
         elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Z, X)
