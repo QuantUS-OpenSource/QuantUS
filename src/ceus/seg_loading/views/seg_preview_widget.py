@@ -79,9 +79,36 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         if hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None:
             # seg_mask should be same spatial shape (x, y, z)
             mask = seg_data.seg_mask
+            
+            # Ensure spatial alignment with image data if dimensions are flipped or permuted
+            # If the mask was saved from DrawVOIWidget, it should match the pixel_data shape
             if mask.shape == (self._x_len, self._y_len, self._z_len):
-                self._roi_masks_overlap[mask > 0] = [255, 0, 0, 125] # Red with transparency
-        
+                self._roi_masks_overlap[mask > 0] = [255, 0, 0, 125]  # Red with transparency
+            elif mask.shape == (self._y_len, self._x_len, self._z_len):
+                # Handle common XY transpose if detected
+                self._roi_masks_overlap[mask.transpose(1, 0, 2) > 0] = [255, 0, 0, 125]
+            else:
+                # Log or handle shape mismatch more gracefully if needed
+                print(f"Warning: Mask shape {mask.shape} does not match image shape {(self._x_len, self._y_len, self._z_len)}")
+                # Try to fit the mask as much as possible if shapes match in 3D volume
+                try:
+                    self._roi_masks_overlap[mask[:self._x_len, :self._y_len, :self._z_len] > 0] = [255, 0, 0, 125]
+                except Exception:
+                    pass
+
+        # Jump crosshair to a point within the mask to show it immediately
+        mask_indices = np.where(self._roi_masks_overlap[..., 3] > 0)
+        if len(mask_indices[0]) > 0:
+            mid_idx = len(mask_indices[0]) // 2
+            self._crosshair_xyzt = [
+                mask_indices[0][mid_idx],
+                mask_indices[1][mid_idx],
+                mask_indices[2][mid_idx],
+                0
+            ]
+        else:
+            self._crosshair_xyzt = [self._x_len // 2, self._y_len // 2, self._z_len // 2, 0]
+
         # Per-plane resources (axial, sagittal, coronal)
         self._ax_sag_cor_matplotlib_canvases = [None, None, None]
         self._ax_sag_cor_planes = (None, None, None)
@@ -199,6 +226,10 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         for label in self._ax_sag_cor_planes:
             if label:
                 label.installEventFilter(self)
+
+    # ============================================================================
+    # UI SETUP & HELPERS
+    # ============================================================================
 
     def _show_widget_lists(self, widget_lists: List[List[QWidget]]) -> None:
         """Helper to show groups of widgets."""
