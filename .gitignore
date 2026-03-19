@@ -7,5 +7,4 @@ fixed_wheels/
 .vscode/
 .DS_Store
 *.so
-/**/*_ui.py
 Visualization_Results/

@@ -186,11 +186,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # self._enhanced_cache = None
         # self._enhanced_cache_frame = -1
         
-        self._frame_cache: Optional[np.ndarray] = None
-        self._frame_cache_t: int = -1
-
-        self._bmode_frame_cache: Optional[np.ndarray] = None  
-        self._bmode_frame_cache_t: int = -1
+        self._slice_cache: dict = {}
 
         # State collections
         self._drawing_widgets = []
@@ -637,11 +633,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self.width_cor_slider.setValue(10)  # 1.0
         
     def _invalidate_enhancement_cache(self) -> None:
-        """Force re-enhancement of current frame on next render."""
-        self._frame_cache = None
-        self._frame_cache_t = -1
-        self._bmode_frame_cache = None
-        self._bmode_frame_cache_t = -1
+        self._slice_cache.clear()
         self._refresh_frames()
 
     def _setup_matplotlib_canvases(self):
@@ -724,83 +716,68 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _get_plane_slice(self, plane_ix: int, initializing=False):
         current_t = self._crosshair_xyzt[3]
+        # Include the fixed-dimension index in the cache key
+        cx, cy, cz = self._crosshair_xyzt[0], self._crosshair_xyzt[1], self._crosshair_xyzt[2]
+        fixed_indices = [cz, cx, cy]  # axial fixed by z, sagittal by x, coronal by y
+        fixed_idx = fixed_indices[plane_ix]
+        key = ('ceus', current_t, plane_ix, fixed_idx)
 
-        if self._frame_cache is None or self._frame_cache_t != current_t:
-            raw_frame = np.array(self._pix_data[:, :, :, current_t])
-            if initializing:
-                self._frame_cache = raw_frame
-            else:
-                self._enhance_volume(raw_frame)  # sets self._frame_cache via update_enhancement_cache
-            self._frame_cache_t = current_t
-
-        idx = self._get_plane_indices(plane_ix)
-        arr = self._frame_cache[tuple(list(idx[:3]))]
-        if arr.ndim != 2:
-            arr = arr.squeeze()
-        if plane_ix == 0:
-            arr = arr.T
-        return arr
+        if key not in self._slice_cache:
+            idx = self._get_plane_indices(plane_ix)
+            raw = np.asarray(self._pix_data[:, :, :, current_t])
+            arr = raw[tuple(list(idx[:3]))].astype(np.float32)
+            if arr.ndim != 2:
+                arr = arr.squeeze()
+            if plane_ix == 0:
+                arr = arr.T
+            if not initializing:
+                arr = self._enhance_slice_ceus(arr)
+            self._slice_cache[key] = arr.astype(np.uint8)
+        return self._slice_cache[key]
 
     def _get_bmode_plane_slice(self, plane_ix: int):
         if self._bmode_pix_data is None:
             return None
         current_t = min(self._crosshair_xyzt[3], self._bmode_pix_data.shape[3] - 1)
+        cx, cy, cz = self._crosshair_xyzt[0], self._crosshair_xyzt[1], self._crosshair_xyzt[2]
+        fixed_indices = [cz, cx, cy]
+        fixed_idx = fixed_indices[plane_ix]
+        key = ('bmode', current_t, plane_ix, fixed_idx)
 
-        if self._bmode_frame_cache is None or self._bmode_frame_cache_t != current_t:
-            raw_frame = np.array(self._bmode_pix_data[:, :, :, current_t])
-            self._bmode_frame_cache = self._enhance_bmode_frame(raw_frame)
-            self._bmode_frame_cache_t = current_t
-
-        idx = self._get_plane_indices(plane_ix)
-        arr = self._bmode_frame_cache[tuple(list(idx[:3]))]
-        if arr.ndim != 2:
-            arr = arr.squeeze()
-        if plane_ix == 0:
-            arr = arr.T
-        return arr
-
-    def _enhance_volume(self, volume_3d: np.ndarray) -> None:
-        """Enhance a CEUS 3D frame using noise normalization with cached noise floor."""
-        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
-        try:
-            funcs = get_im_preproc_funcs()
-            temp_im = UltrasoundImage(self._image_data.scan_path)
-            temp_im.pixel_data = volume_3d.T[None].T.copy()  # H x W x Z x 1
-            temp_im.pixdim = self._image_data.pixdim
-            temp_im.frame_rate = self._image_data.frame_rate
-
-            temp_im = funcs['enhance_ceus_noise_norm'](
-                temp_im,
-                p_low=self._ceus_p_low,
-                p_high_percentile=self._ceus_p_high_percentile,
-            )
-
-            self._frame_cache = temp_im.pixel_data[:, :, :, 0]
-            self._frame_cache_t = self._crosshair_xyzt[3]
-        except Exception as e:
-            print(f"WARNING: _enhance_volume failed: {e}")
-            self._frame_cache = volume_3d
-            self._frame_cache_t = self._crosshair_xyzt[3]
+        if key not in self._slice_cache:
+            idx = self._get_plane_indices(plane_ix)
+            raw = np.asarray(self._bmode_pix_data[:, :, :, current_t])
+            arr = raw[tuple(list(idx[:3]))].astype(np.float32)
+            if arr.ndim != 2:
+                arr = arr.squeeze()
+            if plane_ix == 0:
+                arr = arr.T
+            arr = self._enhance_slice_bmode(arr)
+            self._slice_cache[key] = arr.astype(np.uint8)
+        return self._slice_cache[key]
     
-    def _enhance_bmode_frame(self, volume_3d: np.ndarray) -> np.ndarray:
-        """Enhance a B-mode 3D frame using contrast stretching."""
-        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
-        try:
-            funcs = get_im_preproc_funcs()
-            temp_im = UltrasoundImage(self._image_data.scan_path)
-            temp_im.pixel_data = volume_3d.T[None].T.copy() 
-            temp_im.pixdim = self._image_data.pixdim
-            temp_im.frame_rate = self._image_data.frame_rate
+    def _enhance_slice_ceus(self, arr: np.ndarray) -> np.ndarray:
+        """Inline enhance_ceus_noise_norm on a single 2D slice."""
+        nonzero = arr[arr != 0]
+        if nonzero.size == 0:
+            return np.zeros_like(arr)
+        p_high = np.percentile(nonzero, self._ceus_p_high_percentile)
+        if p_high <= self._ceus_p_low:
+            return np.zeros_like(arr)
+        clipped = np.clip(arr, self._ceus_p_low, p_high)
+        return ((clipped - self._ceus_p_low) / (p_high - self._ceus_p_low) * 255)
 
-            temp_im = funcs['enhance_bmode_noise'](
-                temp_im,
-                p_low_percentile=self._p_low_percentile,
-                p_high_percentile=self._p_high_percentile,
-            )
-            return temp_im.pixel_data[:, :, :, 0]
-        except Exception as e:
-            print(f"WARNING: _enhance_bmode_frame failed: {e}")
-            return volume_3d
+    def _enhance_slice_bmode(self, arr: np.ndarray) -> np.ndarray:
+        """Inline enhance_bmode_noise on a single 2D slice."""
+        nonzero = arr[arr != 0]
+        if nonzero.size == 0:
+            return np.zeros_like(arr)
+        p_low = np.percentile(nonzero, self._p_low_percentile)
+        p_high = np.percentile(nonzero, self._p_high_percentile)
+        if p_high <= p_low:
+            return np.zeros_like(arr)
+        clipped = np.clip(arr, p_low, p_high)
+        return ((clipped - p_low) / (p_high - p_low) * 255)
             
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
