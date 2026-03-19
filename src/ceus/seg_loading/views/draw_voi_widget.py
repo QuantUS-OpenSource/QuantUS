@@ -716,7 +716,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _get_plane_slice(self, plane_ix: int, initializing=False):
         current_t = self._crosshair_xyzt[3]
-        key = ('ceus', current_t, plane_ix)
+        # Include the fixed-dimension index in the cache key
+        cx, cy, cz = self._crosshair_xyzt[0], self._crosshair_xyzt[1], self._crosshair_xyzt[2]
+        fixed_indices = [cz, cx, cy]  # axial fixed by z, sagittal by x, coronal by y
+        fixed_idx = fixed_indices[plane_ix]
+        key = ('ceus', current_t, plane_ix, fixed_idx)
+
         if key not in self._slice_cache:
             idx = self._get_plane_indices(plane_ix)
             raw = np.asarray(self._pix_data[:, :, :, current_t])
@@ -734,7 +739,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if self._bmode_pix_data is None:
             return None
         current_t = min(self._crosshair_xyzt[3], self._bmode_pix_data.shape[3] - 1)
-        key = ('bmode', current_t, plane_ix)
+        cx, cy, cz = self._crosshair_xyzt[0], self._crosshair_xyzt[1], self._crosshair_xyzt[2]
+        fixed_indices = [cz, cx, cy]
+        fixed_idx = fixed_indices[plane_ix]
+        key = ('bmode', current_t, plane_ix, fixed_idx)
+
         if key not in self._slice_cache:
             idx = self._get_plane_indices(plane_ix)
             raw = np.asarray(self._bmode_pix_data[:, :, :, current_t])
