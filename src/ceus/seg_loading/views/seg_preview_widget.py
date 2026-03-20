@@ -200,8 +200,8 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self._show_widget_lists([self._voi_decision_widgets])
         
         # Hide original plane labels (replaced by canvases)
-        for widget in [self._ui.ax_plane, self._ui.sag_plane, self._ui.cor_plane,
-                       self._ui.interp_loading_label, self._ui.saving_voi_label]:
+        # Note: We do NOT hide ax_plane, sag_plane, cor_plane here because they are needed as containers
+        for widget in [self._ui.interp_loading_label, self._ui.saving_voi_label]:
             widget.hide()
 
         self._ui.navigating_label.hide()
@@ -226,6 +226,16 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         for label in self._ax_sag_cor_planes:
             if label:
                 label.installEventFilter(self)
+
+    def _cleanup_animations(self):
+        """Internal helper to stop animations safely."""
+        for i in range(3):
+            if i < len(self._ax_sag_cor_animations) and self._ax_sag_cor_animations[i]:
+                try:
+                    self._ax_sag_cor_animations[i].event_source.stop()
+                except Exception:
+                    pass
+                self._ax_sag_cor_animations[i] = None
 
     # ============================================================================
     # UI SETUP & HELPERS
@@ -363,26 +373,37 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
 
     def _update_aspect_ratios(self) -> None:
         """Update artist aspect ratios based on physics (pixdim) and sliders."""
-        pix = self._image_data.pixdim
-        scales = [self._width_scale_axial, self._width_scale_sagittal, self._width_scale_coronal]
-        
-        # Calculate base physical aspects (Height / Width)
-        # Plane 0: Axial (XY) -> show (Y, X) -> Rows=Y, Cols=X -> dy / dx
-        aspect_ax = (pix[1] / pix[0] if pix[0] != 0 else 1.0) * scales[0]
-        # Plane 1: Sagittal (YZ) -> 90 CW Rotation -> show (Y, Z) -> Rows=Y, Cols=Z -> dy / dz
-        aspect_sag = (pix[1] / pix[2] if pix[2] != 0 else 1.0) * scales[1]
-        # Plane 2: Coronal (XZ) -> show (Z, X) -> Rows=Z, Cols=X -> dz / dx
-        aspect_cor = (pix[2] / pix[0] if pix[0] != 0 else 1.0) * scales[2]
-        
-        final_aspects = [aspect_ax, aspect_sag, aspect_cor]
-        
-        for i, aspect in enumerate(final_aspects):
-            artist = self._ax_sag_cor_plane_artists[i]
-            mask_artist = self._ax_sag_cor_seg_masks[i]
-            if artist: artist.axes.set_aspect(aspect)
-            if mask_artist: mask_artist.axes.set_aspect(aspect)
+        if not hasattr(self, '_image_data') or self._image_data is None:
+            return
+
+        try:
+            pix = self._image_data.pixdim
             
-        self._refresh_frames()
+            # Plane 0: Axial (XY) -> show (Y, X) -> Rows=Y, Cols=X -> dy / dx
+            if self._ax_sag_cor_matplotlib_canvases[0]:
+                dx, dy = pix[0], pix[1]
+                aspect_ax = (dy / dx if dx != 0 else 1.0) * self._width_scale_axial
+                self._ax_sag_cor_matplotlib_canvases[0].figure.gca().set_aspect(aspect_ax)
+            
+            # Plane 1: Sagittal (YZ) -> 90 CW Rotation -> show (Y, Z) -> Rows=Y, Cols=Z -> dy / dz
+            if self._ax_sag_cor_matplotlib_canvases[1]:
+                dy, dz = pix[1], pix[2]
+                aspect_sag = (dy / dz if dz != 0 else 1.0) * self._width_scale_sagittal
+                self._ax_sag_cor_matplotlib_canvases[1].figure.gca().set_aspect(aspect_sag)
+                
+            # Plane 2: Coronal (XZ) -> show (Z, X) -> Rows=Z, Cols=X -> dz / dx
+            if self._ax_sag_cor_matplotlib_canvases[2]:
+                dx, dz = pix[0], pix[2]
+                aspect_cor = (dz / dx if dx != 0 else 1.0) * self._width_scale_coronal
+                self._ax_sag_cor_matplotlib_canvases[2].figure.gca().set_aspect(aspect_cor)
+
+            for canvas in self._ax_sag_cor_matplotlib_canvases:
+                if canvas:
+                    canvas.draw_idle()
+            
+            self._refresh_frames()
+        except Exception as e:
+            print(f"Error updating aspect ratios: {e}")
 
     def _on_philips_toggled(self, state: int) -> None:
         """Handle Philips CEUS pseudocolor toggle."""
@@ -395,15 +416,21 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
 
     def _setup_matplotlib_canvases(self) -> None:
         """Initialize and embed matplotlib canvases into each plane's placeholder layout."""
-        # Use the vertical layouts from the UI and insert canvases in place of the hidden labels
-        layouts = (self._ui.verticalLayout_4, self._ui.verticalLayout_6, self._ui.verticalLayout_7)
-        for i, layout in enumerate(layouts):
+        # Use the axial, sagittal, coronal labels themselves as the parent for the canvases
+        # This ensures they are inside their respective QFrame boxes and aligned correctly
+        for i, parent_label in enumerate(self._ax_sag_cor_planes):
             fig, ax = plt.subplots(facecolor='black')
             fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
             ax.axis('off')
             canvas = FigureCanvas(fig)
+            canvas.setParent(parent_label)
+            
+            # Use Expanding policy
             canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            layout.insertWidget(1, canvas)
+            
+            # Hide the label's text but keep the background/frame
+            parent_label.setText("")
+            
             self._ax_sag_cor_matplotlib_canvases[i] = canvas
 
     def _initialize_plane_displays(self) -> None:
@@ -443,10 +470,12 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         if plane_ix == 0:  # Axial (XY) at Z -> show (Y, X)
             return vol[:, :, z].T
         elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
+            # Match DrawVOIWidget approach: arr.T then rot90(k=-1)
             arr = vol[x, :, :]
             arr_t = arr.T
             return np.rot90(arr_t, k=-1)
-        elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Z, X)
+        elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Y, X)
+            # Mirror Axial for Coronal to match DrawVOI behavior
             return vol[:, y, :].T
         return np.zeros((10, 10))
 
@@ -454,7 +483,7 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         """Extract a 2D mask slice for overlay."""
         x, y, z, _ = self._crosshair_xyzt
         if plane_ix == 0:  # Axial (XY) at Z -> show (Y, X)
-            # Match DrawVOIWidget approach: index mask then transpose
+            # Match DrawVOIWidget approach: index mask then transpose (1, 0, 2)
             arr = self._roi_masks_overlap[:, :, z, :]
             return np.transpose(arr, (1, 0, 2))
         elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
@@ -462,7 +491,8 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             # Consistent with DrawVOIWidget: (1, 0, 2) then rot90(k=-1)
             arr_t = np.transpose(arr, (1, 0, 2))
             return np.rot90(arr_t, k=-1)
-        elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Z, X)
+        elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Y, X)
+            # Mirror Axial for Coronal to match DrawVOI behavior
             arr = self._roi_masks_overlap[:, y, :, :]
             return np.transpose(arr, (1, 0, 2))
         return np.zeros((10, 10, 4), dtype=np.uint8)
@@ -492,20 +522,30 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
     def _setup_all_plane_animations(self) -> None:
         """Setup refresh animations for each matplotlib canvas."""
         for i in range(3):
+            canvas = self._ax_sag_cor_matplotlib_canvases[i]
             self._ax_sag_cor_animations[i] = anim.FuncAnimation(
-                self._ax_sag_cor_matplotlib_canvases[i].figure,
+                canvas.figure,
                 lambda frame, p_ix=i: self._update_plane(p_ix),
-                interval=50, cache_frame_data=False
+                interval=33, 
+                blit=True,
+                cache_frame_data=False
             )
 
     def _update_plane(self, plane_ix: int):
-        """Update artist data for a single plane if marked pending."""
-        if not self._ax_sag_cor_pending[plane_ix]:
-            return
-        
+        """Update artist data for a single plane."""
+        # Always return the list of artists for blitting
+        v_line, h_line = self._ax_sag_cor_crosshair_lines[plane_ix]
         artist = self._ax_sag_cor_plane_artists[plane_ix]
         mask_artist = self._ax_sag_cor_seg_masks[plane_ix]
-        v_line, h_line = self._ax_sag_cor_crosshair_lines[plane_ix]
+        
+        artists = []
+        if artist: artists.append(artist)
+        if mask_artist: artists.append(mask_artist)
+        if v_line: artists.append(v_line)
+        if h_line: artists.append(h_line)
+
+        if not self._ax_sag_cor_pending[plane_ix]:
+            return artists
         
         if artist:
             artist.set_data(self._get_plane_slice(plane_ix))
@@ -514,13 +554,14 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             
         if v_line and h_line:
             idx_x, idx_y = self._ax_sag_cor_index_maps[plane_ix]
+            # When refreshing (e.g. slice changed), snap back to stored indices
             v_line.set_xdata([self._crosshair_xyzt[idx_x]])
             h_line.set_ydata([self._crosshair_xyzt[idx_y]])
             v_line.set_visible(self._crosshair_visible)
             h_line.set_visible(self._crosshair_visible)
 
-        self._ax_sag_cor_matplotlib_canvases[plane_ix].draw_idle()
         self._ax_sag_cor_pending[plane_ix] = False
+        return artists
 
     def _connect_signals(self) -> None:
         """Connect UI signals to internal handlers, matching DrawVOIWidget patterns."""
@@ -528,11 +569,11 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self._ui.cur_slice_slider.valueChanged.connect(self._on_slice_slider_changed)
         self._ui.cur_slice_spin_box.valueChanged.connect(lambda v: self._ui.cur_slice_slider.setValue(int(v)-1))
         self._ui.toggle_crosshair_visibility_button.clicked.connect(self._on_toggle_crosshair)
-        self._ui.back_button.clicked.connect(self.back_requested.emit)
+        self._ui.back_button.clicked.connect(self._on_back_requested)
 
         # Decision Buttons
-        self.confirm_review_button.clicked.connect(self.segmentation_confirmed.emit)
-        self._ui.restart_voi_button.clicked.connect(self.back_requested.emit)
+        self.confirm_review_button.clicked.connect(self._on_confirm_review)
+        self._ui.restart_voi_button.clicked.connect(self._on_back_requested)
         self._ui.save_voi_button.clicked.connect(self._on_save_voi_clicked)
         
         # Save Form Actions
@@ -540,6 +581,16 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self._ui.choose_save_folder_button.clicked.connect(self._on_choose_save_folder)
         self._ui.clear_save_folder_button.clicked.connect(lambda: self._ui.save_folder_input.clear())
         self._ui.export_voi_button.clicked.connect(self._on_export_voi_clicked)
+
+    def _on_back_requested(self):
+        """Handle back request with cleanup."""
+        self._cleanup_animations()
+        self.back_requested.emit()
+
+    def _on_confirm_review(self):
+        """Handle confirmation with cleanup."""
+        self._cleanup_animations()
+        self.segmentation_confirmed.emit()
 
     def _on_save_voi_clicked(self) -> None:
         """Switch to the save file configuration menu."""
@@ -552,6 +603,21 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         """Switch back from save menu to decision menu."""
         self._hide_widget_lists([self._save_voi_widgets, self._voi_alpha_widgets])
         self._show_widget_lists([self._voi_decision_widgets])
+
+    def closeEvent(self, event):
+        """Clean up animations and canvases before the widget is destroyed."""
+        self._cleanup_animations()
+        
+        for i in range(3):
+            canvas = self._ax_sag_cor_matplotlib_canvases[i]
+            if canvas:
+                try:
+                    plt.close(canvas.figure)
+                except Exception:
+                    pass
+                self._ax_sag_cor_matplotlib_canvases[i] = None
+        
+        super().closeEvent(event)
 
     def _on_choose_save_folder(self) -> None:
         """Open directory dialog for saving."""
@@ -659,7 +725,11 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             return
         
         # Match canvas size to the QLabel/placeholder size
-        canvas.setGeometry(0, 0, label_widget.width(), label_widget.height())
+        # We ensure it fills the parent label precisely
+        canvas_width = label_widget.width()
+        canvas_height = label_widget.height()
+        canvas.setFixedSize(canvas_width, canvas_height)
+        canvas.move(0, 0)
         canvas.draw_idle()
 
     def _resize_all_canvases(self):
@@ -692,7 +762,19 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self._on_canvas_motion(event, plane_ix)
 
     def _on_canvas_motion(self, event, plane_ix: int):
-        if not self._crosshair_active or event.inaxes is None or event.xdata is None or event.ydata is None:
+        """Handle mouse movement over a plane and update crosshair indices."""
+        # If no active navigation (locked), we just update the lines to follow mouse
+        if not self._crosshair_active:
+            if event.inaxes is not None and event.xdata is not None and event.ydata is not None:
+                self._update_hover_crosshair(event.xdata, event.ydata, plane_ix)
+            else:
+                # Snap back to current indices when mouse leaves the axes
+                idx_x, idx_y = self._ax_sag_cor_index_maps[plane_ix]
+                self._update_hover_crosshair(self._crosshair_xyzt[idx_x], self._crosshair_xyzt[idx_y], plane_ix)
+            return
+
+        # If crosshair is active (clicked), update global position
+        if event.inaxes is None or event.xdata is None or event.ydata is None:
             return
 
         vary_dims = self._ax_sag_cor_index_maps[plane_ix]
@@ -701,11 +783,30 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
 
         new_xval = int(round(event.xdata))
         new_yval = int(round(event.ydata))
+        
         if 0 <= new_xval < dim_lengths[dim_x] and 0 <= new_yval < dim_lengths[dim_y]:
             params = {}
             if self._crosshair_xyzt[dim_x] != new_xval:
-                params[['x','y','z','t'][dim_x]] = new_xval
+                key = ['x','y','z','t'][dim_x]
+                params[key] = new_xval
             if self._crosshair_xyzt[dim_y] != new_yval:
-                params[['x','y','z','t'][dim_y]] = new_yval
+                key = ['x','y','z','t'][dim_y]
+                params[key] = new_yval
+            
             if params:
                 self.set_crosshair(**params)
+        
+        # Also sync lines with the new global position
+        if self._crosshair_visible:
+            self._update_hover_crosshair(event.xdata, event.ydata, plane_ix)
+
+    def _update_hover_crosshair(self, x, y, plane_ix):
+        """Update crosshair lines to follow mouse hover."""
+        v_line, h_line = self._ax_sag_cor_crosshair_lines[plane_ix]
+        if v_line and h_line:
+            v_line.set_xdata([x, x])
+            h_line.set_ydata([y, y])
+            v_line.set_visible(self._crosshair_visible)
+            h_line.set_visible(self._crosshair_visible)
+            # Only update the background for this ONE canvas
+            self._ax_sag_cor_matplotlib_canvases[plane_ix].draw_idle()
