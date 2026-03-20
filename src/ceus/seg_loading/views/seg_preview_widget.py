@@ -54,6 +54,7 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self._width_scale_sagittal = getattr(seg_data, 'width_scale_sagittal', 1.0)
         self._width_scale_coronal = getattr(seg_data, 'width_scale_coronal', 1.0)
         self._use_philips_ceus = getattr(seg_data, 'use_philips_ceus', False)
+        self._mask_alpha = 125 # Default alpha for mask overlay (0-255)
         
         # Cache for enhanced volume
         self._enhanced_cache = None
@@ -76,6 +77,7 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         
         # Segmentation mask overlay
         self._roi_masks_overlap = np.zeros((self._x_len, self._y_len, self._z_len, 4), dtype=np.uint8)
+        self._seg_mask_indices = None # Store binary mask indices for alpha updates
         if hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None:
             # seg_mask should be same spatial shape (x, y, z)
             mask = seg_data.seg_mask
@@ -83,18 +85,21 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             # Ensure spatial alignment with image data if dimensions are flipped or permuted
             # If the mask was saved from DrawVOIWidget, it should match the pixel_data shape
             if mask.shape == (self._x_len, self._y_len, self._z_len):
-                self._roi_masks_overlap[mask > 0] = [255, 0, 0, 125]  # Red with transparency
+                self._seg_mask_indices = np.where(mask > 0)
             elif mask.shape == (self._y_len, self._x_len, self._z_len):
                 # Handle common XY transpose if detected
-                self._roi_masks_overlap[mask.transpose(1, 0, 2) > 0] = [255, 0, 0, 125]
+                self._seg_mask_indices = np.where(mask.transpose(1, 0, 2) > 0)
             else:
                 # Log or handle shape mismatch more gracefully if needed
                 print(f"Warning: Mask shape {mask.shape} does not match image shape {(self._x_len, self._y_len, self._z_len)}")
                 # Try to fit the mask as much as possible if shapes match in 3D volume
                 try:
-                    self._roi_masks_overlap[mask[:self._x_len, :self._y_len, :self._z_len] > 0] = [255, 0, 0, 125]
+                    self._seg_mask_indices = np.where(mask[:self._x_len, :self._y_len, :self._z_len] > 0)
                 except Exception:
                     pass
+            
+            if self._seg_mask_indices is not None and len(self._seg_mask_indices[0]) > 0:
+                self._roi_masks_overlap[self._seg_mask_indices[0], self._seg_mask_indices[1], self._seg_mask_indices[2]] = [255, 0, 0, 125]
 
         # Jump crosshair to a point within the mask to show it immediately
         mask_indices = np.where(self._roi_masks_overlap[..., 3] > 0)
@@ -313,6 +318,15 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             "WIDTH (COR)", 1, 50, int(self._width_scale_coronal * 10), self._on_width_coronal_changed
         )
         
+        # Add VOI Alpha slider
+        alpha_col, self.alpha_slider, self.alpha_val_lbl = create_enh_column(
+            "VOI ALPHA", 0, 2550, int(self._mask_alpha * 10), lambda v: self._on_alpha_changed(v // 10)
+        )
+        # Fix label to show integer for alpha
+        self.alpha_val_lbl.setText(str(self._mask_alpha))
+        self.alpha_slider.valueChanged.disconnect()
+        self.alpha_slider.valueChanged.connect(lambda v: (self._on_alpha_changed(v // 10), self.alpha_val_lbl.setText(str(v // 10))))
+
         row1_layout.addWidget(clahe_col)
         row1_layout.addWidget(gamma_col)
         
@@ -321,6 +335,7 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self.philips_check.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
         self.philips_check.stateChanged.connect(self._on_philips_toggled)
         row1_layout.addWidget(self.philips_check)
+        row1_layout.addWidget(alpha_col)
 
         row2_layout.addWidget(width_ax_col)
         row2_layout.addWidget(width_sag_col)
@@ -370,6 +385,16 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         if hasattr(self, 'width_cor_val_lbl'):
             self.width_cor_val_lbl.setText(f"{self._width_scale_coronal:.1f}")
         self._update_aspect_ratios()
+
+    def _on_alpha_changed(self, value: int) -> None:
+        """Handle alpha transparency change for the VOI mask."""
+        self._mask_alpha = value
+        # Update the rgba mask transparency
+        # Use stored mask indices to ensure we can recover from alpha=0
+        if self._seg_mask_indices is not None and len(self._seg_mask_indices[0]) > 0:
+            # Re-apply color (Red) and new alpha to the relevant indices
+            self._roi_masks_overlap[self._seg_mask_indices[0], self._seg_mask_indices[1], self._seg_mask_indices[2]] = [255, 0, 0, self._mask_alpha]
+        self._refresh_frames()
 
     def _update_aspect_ratios(self) -> None:
         """Update artist aspect ratios based on physics (pixdim) and sliders."""
