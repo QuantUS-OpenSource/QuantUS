@@ -15,6 +15,7 @@ from .views.seg_type_selection_widget import SegTypeSelectionWidget
 from .views.seg_file_selection_widget import SegFileSelectionWidget
 from .views.draw_roi_widget import DrawROIWidget
 from .views.draw_voi_widget import DrawVOIWidget
+from .views.motion_comp_review_widget import MotionCompReviewWidget
 from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
 
 
@@ -49,7 +50,8 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._seg_type_widget: Optional[SegTypeSelectionWidget] = None
         self._seg_file_widget: Optional[SegFileSelectionWidget] = None
         self._voi_drawing_widget: Optional[DrawVOIWidget] = None
-        
+        self._mc_review_widget: Optional[MotionCompReviewWidget] = None
+
         # Current state
         self._selected_seg_type: Optional[str] = None
         self._seg_data: Optional[CeusSeg] = None
@@ -108,8 +110,9 @@ class SegLoadingViewCoordinator(QStackedWidget):
         """Reset to the segmentation type selection widget."""
         # Remove other widgets if they exist
         widgets_to_remove = [
-            self._seg_file_widget, 
+            self._seg_file_widget,
             self._voi_drawing_widget,
+            self._mc_review_widget,
         ]
         
         for widget in widgets_to_remove:
@@ -122,6 +125,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._roi_drawing_widget = None
         self._voi_drawing_widget = None
         self._seg_preview_widget = None
+        self._mc_review_widget = None
         
         # Clear state
         self._selected_seg_type = None
@@ -177,7 +181,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self.addWidget(self._seg_file_widget)
         self.setCurrentWidget(self._seg_file_widget)
 
-    def show_voi_drawing(self) -> None:
+    def show_voi_drawing(self, initial_frame: int = 0) -> None:
         """Show the VOI drawing widget."""
         self._voi_drawing_widget = DrawVOIWidget(self._image_data, bmode_image_data=self._bmode_image_data)
 
@@ -185,10 +189,14 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._voi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._voi_drawing_widget.close_requested.connect(self.close_requested.emit)
         self._voi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
+        self._voi_drawing_widget.file_selected.connect(self._on_file_selected)
 
         # Add to stack and show
         self.addWidget(self._voi_drawing_widget)
         self.setCurrentWidget(self._voi_drawing_widget)
+
+        if initial_frame > 0:
+            self._voi_drawing_widget.set_initial_frame(initial_frame)
 
     def preview_modified_image(self, modified_image: UltrasoundImage, frame: int) -> None:
         """Show the preprocessed data in the VOI drawing widget."""
@@ -196,6 +204,43 @@ class SegLoadingViewCoordinator(QStackedWidget):
             self._voi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)
         else:
             raise RuntimeError("VOI drawing widget not initialized")
+
+    def show_motion_comp_review(self, seg_data: CeusSeg, image_data: UltrasoundImage,
+                                bmode_image_data: Optional[UltrasoundImage]) -> None:
+        """Show the motion compensation review widget after MC completes."""
+        if self._mc_review_widget:
+            self.removeWidget(self._mc_review_widget)
+            self._mc_review_widget.deleteLater()
+
+        self._mc_review_widget = MotionCompReviewWidget(seg_data, image_data, bmode_image_data)
+        self._mc_review_widget.accepted.connect(
+            lambda: self._emit_user_action('segmentation_confirmed', seg_data)
+        )
+        self._mc_review_widget.reanchor_requested.connect(self._on_reanchor_requested)
+        self._mc_review_widget.rerun_mc_requested.connect(
+            lambda kwargs: self._emit_user_action('rerun_motion_compensation', kwargs)
+        )
+        self._mc_review_widget.back_requested.connect(self.reset_to_seg_type_selection)
+        self._mc_review_widget.close_requested.connect(self.close_requested.emit)
+
+        self.addWidget(self._mc_review_widget)
+        self.setCurrentWidget(self._mc_review_widget)
+
+    def _on_reanchor_requested(self, frame: int) -> None:
+        """Go back to VOI drawing with the bad frame pre-selected for re-anchoring."""
+        # Remove MC review widget
+        if self._mc_review_widget:
+            self.removeWidget(self._mc_review_widget)
+            self._mc_review_widget.deleteLater()
+            self._mc_review_widget = None
+
+        # Remove previous VOI drawing widget if it exists
+        if self._voi_drawing_widget:
+            self.removeWidget(self._voi_drawing_widget)
+            self._voi_drawing_widget.deleteLater()
+            self._voi_drawing_widget = None
+
+        self.show_voi_drawing(initial_frame=frame)
 
     def show_roi_drawing(self) -> None:
         """Show the ROI drawing widget."""

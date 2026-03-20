@@ -12,7 +12,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from .mvc.base_model import BaseModel
 from engines.ceus.src.image_loading.options import get_scan_loaders
 from engines.ceus.src.seg_loading.options import get_seg_loaders
-from engines.ceus.src.entrypoints import scan_loading_step, seg_loading_step
+from engines.ceus.src.entrypoints import scan_loading_step, seg_loading_step, seg_preprocessing_step
 from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
 
 
@@ -75,6 +75,35 @@ class SegLoadingWorker(QThread):
             self.error_msg.emit(f"Error loading segmentation: {e}")
 
 
+class MotionCompWorker(QThread):
+    """Worker thread for motion compensation preprocessing."""
+    finished = pyqtSignal(CeusSeg)
+    error_msg = pyqtSignal(str)
+
+    def __init__(self, seg_data: CeusSeg, image_data: UltrasoundImage,
+                 bmode_image_data: UltrasoundImage, mc_kwargs: Dict[str, Any]):
+        super().__init__()
+        self.seg_data = seg_data
+        self.image_data = image_data
+        self.bmode_image_data = bmode_image_data
+        self.mc_kwargs = mc_kwargs
+
+    def run(self):
+        try:
+            seg_data = seg_preprocessing_step(
+                ['motion_compensation_3d'],
+                self.image_data,
+                self.seg_data,
+                bmode_image_data=self.bmode_image_data,
+                **self.mc_kwargs,
+            )
+            self.finished.emit(seg_data)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.error_msg.emit(f"Motion compensation failed: {e}")
+
+
 class ApplicationModel(BaseModel):
     """
     Unified application model that manages all data and business logic for the QuantUS GUI.
@@ -90,6 +119,8 @@ class ApplicationModel(BaseModel):
     image_loaded = pyqtSignal(UltrasoundImage)
     bmode_image_loaded = pyqtSignal(UltrasoundImage)
     segmentation_loaded = pyqtSignal(CeusSeg)
+    motion_comp_started = pyqtSignal()
+    motion_comp_completed = pyqtSignal(CeusSeg)
 
     def __init__(self):
         super().__init__()
@@ -108,6 +139,10 @@ class ApplicationModel(BaseModel):
         self._selected_seg_type: Optional[str] = None
         self._seg_data: Optional[CeusSeg] = None
         self._seg_worker: Optional[SegLoadingWorker] = None
+
+        # Motion compensation state
+        self._pending_mc_kwargs: Optional[Dict[str, Any]] = None
+        self._mc_worker: Optional[MotionCompWorker] = None
         
         # Initialize loaders
         self._load_scan_loaders()
@@ -549,14 +584,18 @@ class ApplicationModel(BaseModel):
             self._emit_error(f"Error getting seg file extensions: {e}")
             return []
     
-    def load_segmentation(self, seg_path: str, seg_loader_kwargs: Dict[str, Any] = None) -> None:
+    def load_segmentation(self, seg_path: str, seg_loader_kwargs: Dict[str, Any] = None,
+                          mc_kwargs: Dict[str, Any] = None) -> None:
         """
         Load segmentation data.
-        
+
         Args:
             seg_path: Path to segmentation file
             seg_loader_kwargs: Additional loader arguments (optional)
+            mc_kwargs: Motion compensation kwargs (optional). When provided and non-empty,
+                       motion compensation is applied after loading.
         """
+        self._pending_mc_kwargs = mc_kwargs if mc_kwargs else None
         if not self._image_data:
             self._emit_error("No image loaded - cannot load segmentation")
             return
@@ -597,29 +636,69 @@ class ApplicationModel(BaseModel):
     def _on_segmentation_loading_complete(self, seg_data: CeusSeg) -> None:
         """
         Handle completion of segmentation loading.
-        
+
         Args:
             seg_data: Loaded segmentation data
         """
         self._set_loading(False)
-        
-        # Check if loading was successful
-        if seg_data and hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None:
-            self._seg_data = seg_data
-            
-            # Print NIfTI information if applicable
-            seg_path = getattr(self._seg_worker, 'seg_path', '')
-            if seg_path and seg_path.lower().endswith(('.nii', '.nii.gz')):
-                print(f"\n--- NIfTI Segmentation Loaded (QuantUS GUI) ---")
-                print(f"Path: {seg_path}")
-                print(f"Shape: {getattr(seg_data.seg_mask, 'shape', 'Unknown')}")
-                print(f"Pixel Dimensions: {getattr(seg_data, 'pixdim', 'Unknown')}")
-                print(f"-----------------------------------------------\n")
-                
-            self.segmentation_loaded.emit(seg_data)
-        else:
-            print(f"DEBUG: Segmentation loading failed - invalid seg data")
+
+        if not (seg_data and hasattr(seg_data, 'seg_mask') and seg_data.seg_mask is not None):
+            print("DEBUG: Segmentation loading failed - invalid seg data")
             self._emit_error("Failed to load segmentation data")
+            return
+
+        # Print NIfTI information if applicable
+        seg_path = getattr(self._seg_worker, 'seg_path', '')
+        if seg_path and seg_path.lower().endswith(('.nii', '.nii.gz')):
+            print(f"\n--- NIfTI Segmentation Loaded (QuantUS GUI) ---")
+            print(f"Path: {seg_path}")
+            print(f"Shape: {getattr(seg_data.seg_mask, 'shape', 'Unknown')}")
+            print(f"Pixel Dimensions: {getattr(seg_data, 'pixdim', 'Unknown')}")
+            print(f"-----------------------------------------------\n")
+
+        if self._pending_mc_kwargs and self._bmode_image_data is not None:
+            mc_kwargs = self._pending_mc_kwargs
+            self._pending_mc_kwargs = None
+            self._mc_worker = MotionCompWorker(
+                seg_data, self._image_data, self._bmode_image_data, mc_kwargs
+            )
+            self._mc_worker.finished.connect(self._on_mc_complete)
+            self._mc_worker.error_msg.connect(self._emit_error)
+            self.motion_comp_started.emit()
+            self._mc_worker.start()
+        else:
+            self._pending_mc_kwargs = None
+            self._seg_data = seg_data
+            self.segmentation_loaded.emit(seg_data)
+
+    def _on_mc_complete(self, seg_data: CeusSeg) -> None:
+        """Handle motion compensation completion."""
+        self._seg_data = seg_data
+        self.motion_comp_completed.emit(seg_data)
+
+    def apply_motion_compensation(self, mc_kwargs: Dict[str, Any]) -> None:
+        """
+        Re-run motion compensation on the current segmentation with new kwargs.
+
+        Used by the review widget when the user changes the search margin or re-anchors.
+        """
+        if self._seg_data is None or self._bmode_image_data is None:
+            self._emit_error("Cannot run motion compensation: missing segmentation or B-mode data")
+            return
+
+        if self._mc_worker and self._mc_worker.isRunning():
+            self._mc_worker.quit()
+            self._mc_worker.wait()
+
+        # Use a fresh copy of the base seg (without MC) so we don't accumulate MC
+        base_seg = self._seg_data
+        self._mc_worker = MotionCompWorker(
+            base_seg, self._image_data, self._bmode_image_data, mc_kwargs
+        )
+        self._mc_worker.finished.connect(self._on_mc_complete)
+        self._mc_worker.error_msg.connect(self._emit_error)
+        self.motion_comp_started.emit()
+        self._mc_worker.start()
     
     def cleanup(self) -> None:
         """Clean up resources."""

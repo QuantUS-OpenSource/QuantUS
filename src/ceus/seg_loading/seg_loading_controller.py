@@ -22,7 +22,7 @@ class SegmentationLoadingController(BaseController):
     def __init__(self, model: Optional[ApplicationModel] = None, custom_view=None):
         if model is None:
             raise ValueError("ApplicationModel must be provided to SegmentationLoadingController")
-        
+
         # Use custom view if provided, otherwise create coordinator with image data
         if custom_view:
             view = custom_view
@@ -32,12 +32,14 @@ class SegmentationLoadingController(BaseController):
             if not image_data:
                 raise ValueError("No image loaded in ApplicationModel")
             view = SegLoadingViewCoordinator(image_data, bmode_image_data=model.bmode_image_data)
-            
+
         super().__init__(model, view)
-        
-        # # Connect to model signals for automatic view updates
-        # self._connect_model_signals()
-        
+
+        # Connect to model signals
+        model.segmentation_loaded.connect(self._on_segmentation_loaded)
+        model.motion_comp_started.connect(self._on_mc_started)
+        model.motion_comp_completed.connect(self._on_mc_completed)
+
         # Initialize view with segmentation loaders
         self._initialize_view()
         
@@ -66,8 +68,12 @@ class SegmentationLoadingController(BaseController):
             self._handle_segmentation_loading(action_data)
         elif action_name == 'apply_preprocs_preview':
             self._handle_preprocs_preview(action_data)
+        elif action_name == 'rerun_motion_compensation':
+            if self.view._mc_review_widget is not None:
+                self.view._mc_review_widget.show_loading()
+            self.model.apply_motion_compensation(action_data)
         elif action_name == 'segmentation_confirmed':
-            pass # Handle confirmation action in the application controller
+            pass  # Handle confirmation action in the application controller
         else:
             raise ValueError(f"Unknown action: {action_name}")
         
@@ -113,14 +119,41 @@ class SegmentationLoadingController(BaseController):
     def _handle_segmentation_loading(self, load_data: dict) -> None:
         """
         Handle segmentation loading request.
-        
+
         Args:
             load_data: Dictionary with loading parameters
         """
         seg_path = load_data.get('seg_path', '')
         seg_loader_kwargs = load_data.get('seg_loader_kwargs', {})
-        
-        self.model.load_segmentation(seg_path, seg_loader_kwargs)
+        mc_kwargs = load_data.get('mc_kwargs', {})
+
+        self.model.load_segmentation(seg_path, seg_loader_kwargs, mc_kwargs=mc_kwargs or None)
+
+    def _on_segmentation_loaded(self, seg_data: CeusSeg) -> None:
+        """
+        Handle segmentation loaded without motion compensation.
+
+        The MC path uses motion_comp_completed instead and never fires this signal.
+        For the VOI/file-selection path (no MC), proceed directly to confirmation
+        since the user already reviewed the mask in DrawVOIWidget or chose a file.
+        """
+        self.view._emit_user_action('segmentation_confirmed', seg_data)
+
+    def _on_mc_started(self) -> None:
+        """Show loading state while motion compensation runs."""
+        self.view.show_loading()
+
+    def _on_mc_completed(self, seg_data: CeusSeg) -> None:
+        """Show or update the MC review widget after motion compensation completes."""
+        self.view.hide_loading()
+        # If review is already showing (re-run case), update in place; otherwise show fresh
+        if self.view._mc_review_widget is not None:
+            self.view._mc_review_widget.hide_loading()
+            self.view._mc_review_widget.update_mc_result(seg_data)
+        else:
+            self.view.show_motion_comp_review(
+                seg_data, self.model.image_data, self.model.bmode_image_data
+            )
         
     def get_loaded_segmentation(self) -> CeusSeg:
         """

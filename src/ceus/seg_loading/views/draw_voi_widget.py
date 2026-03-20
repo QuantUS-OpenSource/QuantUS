@@ -14,7 +14,8 @@ from matplotlib.path import Path as Mpl_Path
 from matplotlib.colors import LinearSegmentedColormap
 import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox
+from PyQt6.QtWidgets import (QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider,
+                              QVBoxLayout, QFrame, QCheckBox, QDoubleSpinBox, QSpinBox)
 from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
 from PyQt6.QtWidgets import QPushButton
 
@@ -224,6 +225,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         self._voi_interpolation_worker: Optional[VoiInterpolationWorker] = None
 
+        # Motion compensation state
+        self._reference_frame: int = 0   # frame the VOI was drawn on
+        self._saved_voi_path: Optional[str] = None
+
         # UI & visualization setup sequence
         self._setup_ui()
         self._setup_matplotlib_canvases()
@@ -387,11 +392,79 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         self._ui.interp_loading_label.hide(); self._ui.saving_voi_label.hide()
         self._ui.navigating_label.hide(); self._ui.undo_last_roi_button.hide()
-        self._hide_widget_lists([self._voi_decision_widgets, 
+        self._hide_widget_lists([self._voi_decision_widgets,
                                  self._save_voi_widgets, self._voi_alpha_widgets])
-                                 
+
+        # Setup motion compensation panel (hidden until save panel is shown)
+        self._setup_mc_panel()
+
         # Setup enhancement controls in sidebar
         self._setup_enhancement_controls()
+
+    def _setup_mc_panel(self) -> None:
+        """Create motion compensation controls below the save panel."""
+        mc_frame = QFrame()
+        mc_frame.setStyleSheet(
+            "QFrame { background-color: rgba(0,0,0,0); border: 1px solid rgba(255,255,255,60); "
+            "border-radius: 8px; }"
+        )
+        mc_layout = QVBoxLayout(mc_frame)
+        mc_layout.setContentsMargins(10, 8, 10, 8)
+        mc_layout.setSpacing(6)
+
+        # Title + checkbox
+        title_row = QHBoxLayout()
+        mc_title = QLabel("Motion Compensation")
+        mc_title.setStyleSheet("color: white; font-size: 15px; font-weight: bold; border: none;")
+        self._mc_enable_check = QCheckBox("Enable")
+        self._mc_enable_check.setStyleSheet("color: #3af; font-size: 14px; border: none;")
+        self._mc_enable_check.setChecked(self._bmode_image_data is not None)
+        self._mc_enable_check.setEnabled(self._bmode_image_data is not None)
+        if self._bmode_image_data is None:
+            self._mc_enable_check.setToolTip("B-mode data required for motion compensation")
+        title_row.addWidget(mc_title)
+        title_row.addStretch()
+        title_row.addWidget(self._mc_enable_check)
+        mc_layout.addLayout(title_row)
+
+        # Reference frame label
+        ref_row = QHBoxLayout()
+        ref_label = QLabel("Reference frame:")
+        ref_label.setStyleSheet("color: #ccc; font-size: 13px; border: none;")
+        self._mc_ref_frame_label = QLabel(f"frame {self._reference_frame}")
+        self._mc_ref_frame_label.setStyleSheet(
+            "color: #3af; font-size: 13px; font-weight: bold; border: none;"
+        )
+        ref_row.addWidget(ref_label)
+        ref_row.addStretch()
+        ref_row.addWidget(self._mc_ref_frame_label)
+        mc_layout.addLayout(ref_row)
+
+        # Search margin
+        margin_row = QHBoxLayout()
+        margin_label = QLabel("Search margin:")
+        margin_label.setStyleSheet("color: #ccc; font-size: 13px; border: none;")
+        self._mc_margin_spinbox = QDoubleSpinBox()
+        self._mc_margin_spinbox.setRange(0.005, 0.5)
+        self._mc_margin_spinbox.setSingleStep(0.005)
+        self._mc_margin_spinbox.setDecimals(3)
+        self._mc_margin_spinbox.setValue(0.02)
+        self._mc_margin_spinbox.setStyleSheet(
+            "QDoubleSpinBox { background: #333; color: white; border-radius: 4px; "
+            "font-size: 13px; border: none; }"
+        )
+        self._mc_margin_spinbox.setMaximumWidth(90)
+        margin_row.addWidget(margin_label)
+        margin_row.addStretch()
+        margin_row.addWidget(self._mc_margin_spinbox)
+        mc_layout.addLayout(margin_row)
+
+        # Add to the layout below the gridLayout (verticalLayout_5)
+        self._ui.verticalLayout_5.addWidget(mc_frame)
+
+        # Track widget for show/hide with save panel
+        self._mc_panel = mc_frame
+        self._save_voi_widgets.append(mc_frame)
 
     def _setup_enhancement_controls(self) -> None:
         """Add enhancement sliders to the sidebar, styled like the existing slice slider."""
@@ -1156,10 +1229,21 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._refresh_frames()
 
     def _on_export_voi_clicked(self):
+        # Validate inputs before starting the worker
+        if not Path(self._ui.save_folder_input.text()).is_dir():
+            self.show_error("Please select a valid save folder.")
+            return
+        out_name = self._ui.save_name_input.text()
+        if not out_name:
+            self.show_error("Please enter a valid name for the VOI.")
+            return
+        out_name = out_name + '.nii.gz' if not out_name.endswith('.nii.gz') else out_name
+        self._saved_voi_path = str(Path(self._ui.save_folder_input.text()) / out_name)
+
         # Show saving label, hide save widgets
         self._ui.saving_voi_label.show()
         self._hide_widget_lists([self._save_voi_widgets])
-        
+
         self._save_worker = SaveVoiWorker(self)
         self._save_worker.finished.connect(self._on_save_voi_finished)
         self._save_worker.error_msg.connect(self._on_save_voi_error)
@@ -1317,6 +1401,23 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._show_widget_lists([self._save_voi_widgets])
         print(msg)
 
+        if self._saved_voi_path is None:
+            return
+
+        mc_kwargs: dict = {}
+        if hasattr(self, '_mc_enable_check') and self._mc_enable_check.isChecked():
+            mc_kwargs = {
+                'reference_frame': self._reference_frame,
+                'search_margin_ratio': self._mc_margin_spinbox.value(),
+                'padding': 5,
+            }
+
+        self.file_selected.emit({
+            'seg_path': self._saved_voi_path,
+            'seg_type': 'Manual Segmentation',
+            'mc_kwargs': mc_kwargs,
+        })
+
     def _on_save_voi_error(self, err):
         self._ui.saving_voi_label.hide()
         self._show_widget_lists([self._save_voi_widgets])
@@ -1391,6 +1492,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             return
         super().keyPressEvent(event)
         
+    def set_initial_frame(self, frame: int) -> None:
+        """Pre-select a frame (used when re-anchoring MC from the review widget)."""
+        frame = max(0, min(frame, self._num_slices - 1))
+        self.set_crosshair(t=frame)
+        self._refresh_frames()
+
     def _on_back_clicked(self) -> None:
         """Handle back button click."""
         self.clear_error()
@@ -1565,10 +1672,15 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._ui.back_button.setEnabled(True)
 
     def _on_interpolation_finished(self, voi_mask: np.ndarray):
+        # Record the current frame as the reference for motion compensation
+        self._reference_frame = self._crosshair_xyzt[3]
+        if hasattr(self, '_mc_ref_frame_label'):
+            self._mc_ref_frame_label.setText(f"frame {self._reference_frame}")
+
         # Update the master overlap mask with the new 3D VOI
         self._roi_masks_overlap.fill(0)
         self._roi_masks_overlap[voi_mask, 0] = 255  # Red
         self._roi_masks_overlap[voi_mask, 3] = 128  # Alpha
-        
+
         self._set_interp_loading(False)
         self._refresh_frames()
