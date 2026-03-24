@@ -68,9 +68,14 @@ class SegmentationLoadingController(BaseController):
             self._handle_segmentation_loading(action_data)
         elif action_name == 'apply_preprocs_preview':
             self._handle_preprocs_preview(action_data)
+        elif action_name == 'run_mc_from_mask':
+            self.model.run_mc_from_mask(
+                action_data['voi_mask'],
+                action_data['reference_frame'],
+                action_data['search_margin_ratio'],
+                action_data.get('padding', 5),
+            )
         elif action_name == 'rerun_motion_compensation':
-            if self.view._mc_review_widget is not None:
-                self.view._mc_review_widget.show_loading()
             self.model.apply_motion_compensation(action_data)
         elif action_name == 'segmentation_confirmed':
             pass  # Handle confirmation action in the application controller
@@ -144,16 +149,11 @@ class SegmentationLoadingController(BaseController):
         self.view.show_loading()
 
     def _on_mc_completed(self, seg_data: CeusSeg) -> None:
-        """Show or update the MC review widget after motion compensation completes."""
+        """Enter or update MC review mode in the VOI drawing widget."""
         self.view.hide_loading()
-        # If review is already showing (re-run case), update in place; otherwise show fresh
-        if self.view._mc_review_widget is not None:
-            self.view._mc_review_widget.hide_loading()
-            self.view._mc_review_widget.update_mc_result(seg_data)
-        else:
-            self.view.show_motion_comp_review(
-                seg_data, self.model.image_data, self.model.bmode_image_data
-            )
+        self.view.show_motion_comp_review(
+            seg_data, self.model.image_data, self.model.bmode_image_data
+        )
         
     def get_loaded_segmentation(self) -> CeusSeg:
         """

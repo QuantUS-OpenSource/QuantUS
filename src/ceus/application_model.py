@@ -676,6 +676,41 @@ class ApplicationModel(BaseModel):
         self._seg_data = seg_data
         self.motion_comp_completed.emit(seg_data)
 
+    def run_mc_from_mask(self, voi_mask, reference_frame: int,
+                         search_margin_ratio: float, padding: int = 5) -> None:
+        """
+        Run motion compensation directly from an in-memory VOI mask (no file I/O).
+
+        Creates a CeusSeg from the mask, then runs MotionCompWorker.
+        """
+        if self._bmode_image_data is None:
+            self._emit_error("B-mode data required for motion compensation")
+            return
+
+        import numpy as np
+        seg_data = CeusSeg()
+        seg_data.seg_mask = voi_mask.astype(np.uint8)
+        seg_data.pixdim = list(self._image_data.pixdim[:3])
+        seg_data.seg_name = "Manual VOI (MC)"
+
+        mc_kwargs = {
+            'reference_frame': reference_frame,
+            'search_margin_ratio': search_margin_ratio,
+            'padding': padding,
+        }
+
+        if self._mc_worker and self._mc_worker.isRunning():
+            self._mc_worker.quit()
+            self._mc_worker.wait()
+
+        self._mc_worker = MotionCompWorker(
+            seg_data, self._image_data, self._bmode_image_data, mc_kwargs
+        )
+        self._mc_worker.finished.connect(self._on_mc_complete)
+        self._mc_worker.error_msg.connect(self._emit_error)
+        self.motion_comp_started.emit()
+        self._mc_worker.start()
+
     def apply_motion_compensation(self, mc_kwargs: Dict[str, Any]) -> None:
         """
         Re-run motion compensation on the current segmentation with new kwargs.

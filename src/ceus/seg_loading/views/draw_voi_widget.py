@@ -14,6 +14,7 @@ from matplotlib.path import Path as Mpl_Path
 from matplotlib.colors import LinearSegmentedColormap
 import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
+from scipy.ndimage import shift as ndimage_shift
 from PyQt6.QtWidgets import (QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider,
                               QVBoxLayout, QFrame, QCheckBox, QDoubleSpinBox, QSpinBox)
 from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
@@ -22,6 +23,7 @@ from PyQt6.QtWidgets import QPushButton
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
 from engines.ceus.src.data_objs import UltrasoundImage
+from engines.ceus.src.seg_preprocessing.motion_compensation_3d import BoundingBox3D
 from .spline import calculateSpline3D, calculateSpline
 
 # Philips CEUS Colormap: Grayscale -> Red -> Yellow
@@ -147,7 +149,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     """
     
     # Signals for communicating with controller
-    file_selected = pyqtSignal(dict)  # {'seg_path': str, 'seg_type': str}
+    file_selected = pyqtSignal(dict)      # {'seg_path': str, 'seg_type': str}
+    run_mc_requested = pyqtSignal(object, int, float, int)  # voi_mask, reference_frame, search_margin_ratio, padding
+    mc_accepted = pyqtSignal()
+    rerun_mc_requested = pyqtSignal(dict)  # kwargs for full re-run
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
     apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
@@ -228,6 +233,17 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Motion compensation state
         self._reference_frame: int = 0   # frame the VOI was drawn on
         self._saved_voi_path: Optional[str] = None
+
+        # VOI bbox overlay state (shown after interpolation, before MC)
+        self._voi_mask_3d: Optional[np.ndarray] = None  # raw 3D mask for bbox recomputation
+        self._voi_bbox: Optional[BoundingBox3D] = None
+        self._voi_search_bbox: Optional[BoundingBox3D] = None
+
+        # MC review mode state
+        self._mc_mode: bool = False
+        self._mc_seg_data = None
+        self._mc_shifted_mask_cache: dict = {}
+        self._mc_review_widgets = []
 
         # UI & visualization setup sequence
         self._setup_ui()
@@ -390,47 +406,38 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.toggle_crosshair_visibility_button.setText('Hide Crosshair')
         self._ui.cur_slice_label.setText("Current Frame:")
 
+        # Setup MC controls (must come before _hide_widget_lists so they join the group)
+        self._setup_mc_controls()
+        self._setup_mc_review_panel()
+
         self._ui.interp_loading_label.hide(); self._ui.saving_voi_label.hide()
         self._ui.navigating_label.hide(); self._ui.undo_last_roi_button.hide()
         self._hide_widget_lists([self._voi_decision_widgets,
                                  self._save_voi_widgets, self._voi_alpha_widgets])
 
-        # Setup motion compensation panel (hidden until save panel is shown)
-        self._setup_mc_panel()
-
         # Setup enhancement controls in sidebar
         self._setup_enhancement_controls()
 
-    def _setup_mc_panel(self) -> None:
-        """Create motion compensation controls below the save panel."""
+    def _setup_mc_controls(self) -> None:
+        """Create MC controls shown after VOI interpolation (in the decision area)."""
         mc_frame = QFrame()
         mc_frame.setStyleSheet(
-            "QFrame { background-color: rgba(0,0,0,0); border: 1px solid rgba(255,255,255,60); "
-            "border-radius: 8px; }"
+            "QFrame { background-color: rgba(0,0,0,0); "
+            "border: 1px solid rgba(255,255,255,50); border-radius: 8px; }"
         )
         mc_layout = QVBoxLayout(mc_frame)
         mc_layout.setContentsMargins(10, 8, 10, 8)
         mc_layout.setSpacing(6)
 
-        # Title + checkbox
-        title_row = QHBoxLayout()
-        mc_title = QLabel("Motion Compensation")
-        mc_title.setStyleSheet("color: white; font-size: 15px; font-weight: bold; border: none;")
-        self._mc_enable_check = QCheckBox("Enable")
-        self._mc_enable_check.setStyleSheet("color: #3af; font-size: 14px; border: none;")
-        self._mc_enable_check.setChecked(self._bmode_image_data is not None)
-        self._mc_enable_check.setEnabled(self._bmode_image_data is not None)
-        if self._bmode_image_data is None:
-            self._mc_enable_check.setToolTip("B-mode data required for motion compensation")
-        title_row.addWidget(mc_title)
-        title_row.addStretch()
-        title_row.addWidget(self._mc_enable_check)
-        mc_layout.addLayout(title_row)
+        # Title row
+        title_lbl = QLabel("Motion Compensation")
+        title_lbl.setStyleSheet("color: white; font-size: 14px; font-weight: bold; border: none;")
+        mc_layout.addWidget(title_lbl)
 
-        # Reference frame label
+        # Reference frame (read-only display)
         ref_row = QHBoxLayout()
         ref_label = QLabel("Reference frame:")
-        ref_label.setStyleSheet("color: #ccc; font-size: 13px; border: none;")
+        ref_label.setStyleSheet("color: #aaa; font-size: 13px; border: none;")
         self._mc_ref_frame_label = QLabel(f"frame {self._reference_frame}")
         self._mc_ref_frame_label.setStyleSheet(
             "color: #3af; font-size: 13px; font-weight: bold; border: none;"
@@ -440,10 +447,29 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         ref_row.addWidget(self._mc_ref_frame_label)
         mc_layout.addLayout(ref_row)
 
+        # Bbox padding
+        padding_row = QHBoxLayout()
+        padding_label = QLabel("Bbox padding:")
+        padding_label.setStyleSheet("color: #aaa; font-size: 13px; border: none;")
+        self._mc_padding_spinbox = QSpinBox()
+        self._mc_padding_spinbox.setRange(0, 50)
+        self._mc_padding_spinbox.setSingleStep(1)
+        self._mc_padding_spinbox.setValue(5)
+        self._mc_padding_spinbox.setStyleSheet(
+            "QSpinBox { background: #333; color: white; border-radius: 4px; "
+            "font-size: 13px; border: none; }"
+        )
+        self._mc_padding_spinbox.setMaximumWidth(70)
+        self._mc_padding_spinbox.setToolTip("Padding in voxels around the VOI bounding box")
+        padding_row.addWidget(padding_label)
+        padding_row.addStretch()
+        padding_row.addWidget(self._mc_padding_spinbox)
+        mc_layout.addLayout(padding_row)
+
         # Search margin
         margin_row = QHBoxLayout()
         margin_label = QLabel("Search margin:")
-        margin_label.setStyleSheet("color: #ccc; font-size: 13px; border: none;")
+        margin_label.setStyleSheet("color: #aaa; font-size: 13px; border: none;")
         self._mc_margin_spinbox = QDoubleSpinBox()
         self._mc_margin_spinbox.setRange(0.005, 0.5)
         self._mc_margin_spinbox.setSingleStep(0.005)
@@ -459,12 +485,107 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         margin_row.addWidget(self._mc_margin_spinbox)
         mc_layout.addLayout(margin_row)
 
-        # Add to the layout below the gridLayout (verticalLayout_5)
-        self._ui.verticalLayout_5.addWidget(mc_frame)
+        # Run MC button
+        self._run_mc_button = QPushButton("Run Motion Compensation")
+        self._run_mc_button.setStyleSheet(
+            "QPushButton { color: white; font-size: 14px; font-weight: bold; "
+            "background: rgb(0, 120, 180); border-radius: 12px; padding: 6px 10px; }"
+            "QPushButton:disabled { background: rgb(80, 80, 80); color: #888; }"
+        )
+        self._run_mc_button.setEnabled(False)  # enabled only after VOI is interpolated
+        if self._bmode_image_data is None:
+            self._run_mc_button.setToolTip("B-mode data required for motion compensation")
+        self._run_mc_button.clicked.connect(self._on_run_mc_clicked)
+        mc_layout.addWidget(self._run_mc_button)
 
-        # Track widget for show/hide with save panel
-        self._mc_panel = mc_frame
-        self._save_voi_widgets.append(mc_frame)
+        # Live bbox/search region update when parameters change
+        self._mc_padding_spinbox.valueChanged.connect(self._on_bbox_params_changed)
+        self._mc_margin_spinbox.valueChanged.connect(self._on_bbox_params_changed)
+
+        # Insert into verticalLayout_5 right after horizontalLayout_2 (restart+save buttons)
+        # horizontalLayout_2 is at index 3 in verticalLayout_5
+        self._ui.verticalLayout_5.insertWidget(4, mc_frame)
+
+        # Add to decision widgets so it shows/hides with restart+save
+        self._voi_decision_widgets.append(mc_frame)
+
+    def _setup_mc_review_panel(self) -> None:
+        """Create MC review controls shown after MC completes (replaces decision area)."""
+        review_frame = QFrame()
+        review_frame.setStyleSheet(
+            "QFrame { background-color: rgba(0,0,0,0); "
+            "border: 1px solid rgba(255,255,255,50); border-radius: 8px; }"
+        )
+        review_layout = QVBoxLayout(review_frame)
+        review_layout.setContentsMargins(10, 8, 10, 8)
+        review_layout.setSpacing(6)
+
+        title_lbl = QLabel("MC Review")
+        title_lbl.setStyleSheet("color: white; font-size: 14px; font-weight: bold; border: none;")
+        review_layout.addWidget(title_lbl)
+
+        self._mc_review_ref_lbl = QLabel("")
+        self._mc_review_ref_lbl.setStyleSheet("color: #3af; font-size: 12px; border: none;")
+        review_layout.addWidget(self._mc_review_ref_lbl)
+
+        info_lbl = QLabel("Navigate to a bad frame,\nthen click Re-anchor to redraw.")
+        info_lbl.setStyleSheet("color: #aaa; font-size: 12px; border: none;")
+        info_lbl.setWordWrap(True)
+        review_layout.addWidget(info_lbl)
+
+        self._mc_reanchor_btn = QPushButton("Re-anchor at this frame")
+        self._mc_reanchor_btn.setStyleSheet(
+            "QPushButton { color: white; font-size: 13px; font-weight: bold; "
+            "background: rgb(130, 0, 160); border-radius: 10px; padding: 5px 8px; }"
+        )
+        self._mc_reanchor_btn.clicked.connect(self._on_mc_reanchor_clicked)
+        review_layout.addWidget(self._mc_reanchor_btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #555; max-height: 1px; border: none;")
+        review_layout.addWidget(sep)
+
+        margin_row = QHBoxLayout()
+        margin_lbl = QLabel("Search margin:")
+        margin_lbl.setStyleSheet("color: #aaa; font-size: 12px; border: none;")
+        self._mc_review_margin_spinbox = QDoubleSpinBox()
+        self._mc_review_margin_spinbox.setRange(0.005, 0.5)
+        self._mc_review_margin_spinbox.setSingleStep(0.005)
+        self._mc_review_margin_spinbox.setDecimals(3)
+        self._mc_review_margin_spinbox.setValue(0.02)
+        self._mc_review_margin_spinbox.setStyleSheet(
+            "QDoubleSpinBox { background: #333; color: white; border-radius: 4px; "
+            "font-size: 12px; border: none; }"
+        )
+        self._mc_review_margin_spinbox.setMaximumWidth(85)
+        margin_row.addWidget(margin_lbl)
+        margin_row.addStretch()
+        margin_row.addWidget(self._mc_review_margin_spinbox)
+        review_layout.addLayout(margin_row)
+
+        self._mc_rerun_btn = QPushButton("Re-run MC")
+        self._mc_rerun_btn.setStyleSheet(
+            "QPushButton { color: white; font-size: 13px; font-weight: bold; "
+            "background: rgb(160, 90, 0); border-radius: 10px; padding: 5px 8px; }"
+            "QPushButton:disabled { background: rgb(80,80,80); color: #888; }"
+        )
+        self._mc_rerun_btn.clicked.connect(self._on_mc_rerun_clicked)
+        review_layout.addWidget(self._mc_rerun_btn)
+
+        self._mc_accept_btn = QPushButton("Accept & Proceed")
+        self._mc_accept_btn.setStyleSheet(
+            "QPushButton { color: white; font-size: 13px; font-weight: bold; "
+            "background: rgb(0, 140, 60); border-radius: 10px; padding: 5px 8px; }"
+            "QPushButton:disabled { background: rgb(80,80,80); color: #888; }"
+        )
+        self._mc_accept_btn.clicked.connect(self.mc_accepted.emit)
+        review_layout.addWidget(self._mc_accept_btn)
+
+        # Insert after the MC run controls (position 5)
+        self._ui.verticalLayout_5.insertWidget(5, review_frame)
+        review_frame.hide()
+        self._mc_review_widgets.append(review_frame)
 
     def _setup_enhancement_controls(self) -> None:
         """Add enhancement sliders to the sidebar, styled like the existing slice slider."""
@@ -1216,6 +1337,9 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._roi_masks_overlap.fill(0)
         self._plotted_pts.clear()
         self._current_drawing_plane = None
+        self._voi_mask_3d = None
+        self._voi_bbox = None
+        self._voi_search_bbox = None
         
         # Update UI
         self._hide_widget_lists([self._voi_decision_widgets])
@@ -1404,18 +1528,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if self._saved_voi_path is None:
             return
 
-        mc_kwargs: dict = {}
-        if hasattr(self, '_mc_enable_check') and self._mc_enable_check.isChecked():
-            mc_kwargs = {
-                'reference_frame': self._reference_frame,
-                'search_margin_ratio': self._mc_margin_spinbox.value(),
-                'padding': 5,
-            }
-
+        # Emit file_selected so the seg is loaded (no MC via save path; use Run MC button)
         self.file_selected.emit({
             'seg_path': self._saved_voi_path,
             'seg_type': 'Manual Segmentation',
-            'mc_kwargs': mc_kwargs,
         })
 
     def _on_save_voi_error(self, err):
@@ -1437,6 +1553,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _refresh_frames(self) -> None:
         """Refresh the displayed frames."""
+        if self._mc_mode:
+            self._update_mc_overlay(self._crosshair_xyzt[3])
+        elif self._voi_bbox is not None:
+            self._update_voi_bbox_overlay()
         for i in range(3):
             self._ax_sag_cor_pending[i] = True
 
@@ -1497,6 +1617,213 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         frame = max(0, min(frame, self._num_slices - 1))
         self.set_crosshair(t=frame)
         self._refresh_frames()
+
+    def _on_run_mc_clicked(self) -> None:
+        """Emit run_mc_requested with the current in-memory VOI mask."""
+        if self._voi_mask_3d is None or not self._voi_mask_3d.any():
+            self.show_error("No VOI detected. Please draw and interpolate a VOI first.")
+            return
+        voi_mask = self._voi_mask_3d
+        self.run_mc_requested.emit(
+            voi_mask,
+            self._reference_frame,
+            self._mc_margin_spinbox.value(),
+            self._mc_padding_spinbox.value(),
+        )
+
+    # -------------------------------------------------------------------------
+    # VOI bounding box and search region overlay (shown after interpolation)
+    # -------------------------------------------------------------------------
+
+    def _compute_voi_boxes(self) -> None:
+        """Compute reference bbox (tight + padding) and search bbox from current spinbox values."""
+        if self._voi_mask_3d is None:
+            return
+        padding = self._mc_padding_spinbox.value()
+        try:
+            self._voi_bbox = BoundingBox3D.from_mask(self._voi_mask_3d, padding=padding)
+        except ValueError:
+            self._voi_bbox = None
+            self._voi_search_bbox = None
+            return
+        margin_ratio = self._mc_margin_spinbox.value()
+        sx = max(1, int(margin_ratio * self._x_len))
+        sy = max(1, int(margin_ratio * self._y_len))
+        sz = max(1, int(margin_ratio * self._z_len))
+        self._voi_search_bbox = self._voi_bbox.expand((sx, sy, sz))
+
+    def _draw_bbox_border(self, bbox: BoundingBox3D, color: list, cx: int, cy: int, cz: int) -> None:
+        """Draw a 3D bounding box border into _roi_masks_overlap at the current crosshair."""
+        x0 = max(0, int(bbox.x_min))
+        x1 = min(self._x_len - 1, int(bbox.x_max))
+        y0 = max(0, int(bbox.y_min))
+        y1 = min(self._y_len - 1, int(bbox.y_max))
+        z0 = max(0, int(bbox.z_min))
+        z1 = min(self._z_len - 1, int(bbox.z_max))
+        c = np.array(color, dtype=np.uint8)
+
+        # Plane 0 (axial): X, Y vary; fixed Z=cz
+        if z0 <= cz <= z1:
+            self._roi_masks_overlap[x0:x1+1, y0, cz] = c
+            self._roi_masks_overlap[x0:x1+1, y1, cz] = c
+            self._roi_masks_overlap[x0, y0:y1+1, cz] = c
+            self._roi_masks_overlap[x1, y0:y1+1, cz] = c
+
+        # Plane 1 (sagittal): Z, Y vary; fixed X=cx
+        if x0 <= cx <= x1:
+            self._roi_masks_overlap[cx, y0:y1+1, z0] = c
+            self._roi_masks_overlap[cx, y0:y1+1, z1] = c
+            self._roi_masks_overlap[cx, y0, z0:z1+1] = c
+            self._roi_masks_overlap[cx, y1, z0:z1+1] = c
+
+        # Plane 2 (coronal): Z, X vary; fixed Y=cy
+        if y0 <= cy <= y1:
+            self._roi_masks_overlap[x0:x1+1, cy, z0] = c
+            self._roi_masks_overlap[x0:x1+1, cy, z1] = c
+            self._roi_masks_overlap[x0, cy, z0:z1+1] = c
+            self._roi_masks_overlap[x1, cy, z0:z1+1] = c
+
+    def _update_voi_bbox_overlay(self) -> None:
+        """Redraw _roi_masks_overlap: red VOI + yellow bbox + orange search region."""
+        self._roi_masks_overlap.fill(0)
+        if self._voi_mask_3d is not None:
+            self._roi_masks_overlap[self._voi_mask_3d > 0, 0] = 255  # R
+            self._roi_masks_overlap[self._voi_mask_3d > 0, 3] = 100  # A
+        cx, cy, cz = self._crosshair_xyzt[:3]
+        if self._voi_bbox is not None:
+            self._draw_bbox_border(self._voi_bbox, [255, 220, 0, 230], cx, cy, cz)
+        if self._voi_search_bbox is not None:
+            self._draw_bbox_border(self._voi_search_bbox, [255, 140, 0, 200], cx, cy, cz)
+
+    def _on_bbox_params_changed(self) -> None:
+        """Called when padding or search margin spinbox changes; recomputes and redraws boxes."""
+        if self._voi_mask_3d is not None and not self._mc_mode:
+            self._compute_voi_boxes()
+            self._refresh_frames()
+
+    # -------------------------------------------------------------------------
+    # MC review mode
+    # -------------------------------------------------------------------------
+
+    def _update_mc_overlay(self, frame: int) -> None:
+        """Update _roi_masks_overlap with the MC-shifted VOI and bbox for the given frame."""
+        if self._mc_seg_data is None:
+            return
+        mc = getattr(self._mc_seg_data, 'motion_compensation', None)
+        voi_mask = getattr(self._mc_seg_data, 'seg_mask', None)
+        if mc is None or voi_mask is None:
+            return
+
+        # Shifted VOI (cached per frame)
+        if frame not in self._mc_shifted_mask_cache:
+            tx, ty, tz = mc.get_translation(frame)
+            shifted = ndimage_shift(voi_mask.astype(float), [tx, ty, tz], order=0, cval=0)
+            self._mc_shifted_mask_cache[frame] = (shifted > 0.5).astype(np.uint8)
+        shifted_mask = self._mc_shifted_mask_cache[frame]
+
+        # Red semi-transparent VOI overlay
+        self._roi_masks_overlap.fill(0)
+        self._roi_masks_overlap[..., 0] = shifted_mask * 255  # R
+        self._roi_masks_overlap[..., 3] = shifted_mask * 100  # A
+
+        # Cyan bounding box border drawn directly into the overlay
+        if not mc.tracked_bboxes:
+            return
+        bbox = mc.tracked_bboxes[frame]
+        x0 = max(0, int(bbox.x_min))
+        x1 = min(self._x_len - 1, int(bbox.x_max))
+        y0 = max(0, int(bbox.y_min))
+        y1 = min(self._y_len - 1, int(bbox.y_max))
+        z0 = max(0, int(bbox.z_min))
+        z1 = min(self._z_len - 1, int(bbox.z_max))
+        CYAN = np.array([0, 192, 255, 255], dtype=np.uint8)
+        cx, cy, cz = self._crosshair_xyzt[:3]
+
+        # Plane 0 (axial): varies X (dim 0), Y (dim 1); fixed Z=cz
+        if z0 <= cz <= z1:
+            self._roi_masks_overlap[x0:x1+1, y0, cz] = CYAN
+            self._roi_masks_overlap[x0:x1+1, y1, cz] = CYAN
+            self._roi_masks_overlap[x0, y0:y1+1, cz] = CYAN
+            self._roi_masks_overlap[x1, y0:y1+1, cz] = CYAN
+
+        # Plane 1 (sagittal): varies Z (dim 2), Y (dim 1); fixed X=cx
+        if x0 <= cx <= x1:
+            self._roi_masks_overlap[cx, y0:y1+1, z0] = CYAN
+            self._roi_masks_overlap[cx, y0:y1+1, z1] = CYAN
+            self._roi_masks_overlap[cx, y0, z0:z1+1] = CYAN
+            self._roi_masks_overlap[cx, y1, z0:z1+1] = CYAN
+
+        # Plane 2 (coronal): varies Z (dim 2), X (dim 0); fixed Y=cy
+        if y0 <= cy <= y1:
+            self._roi_masks_overlap[x0:x1+1, cy, z0] = CYAN
+            self._roi_masks_overlap[x0:x1+1, cy, z1] = CYAN
+            self._roi_masks_overlap[x0, cy, z0:z1+1] = CYAN
+            self._roi_masks_overlap[x1, cy, z0:z1+1] = CYAN
+
+    def enter_mc_review_mode(self, seg_data) -> None:
+        """Switch to MC review mode: show shifted VOI + bbox in the 3D viewer."""
+        self._mc_seg_data = seg_data
+        self._mc_mode = True
+        self._mc_shifted_mask_cache.clear()
+
+        mc = getattr(seg_data, 'motion_compensation', None)
+        ref_frame = mc.reference_frame if mc is not None else 0
+        self._mc_review_ref_lbl.setText(f"Reference frame: {ref_frame}")
+        self._mc_review_margin_spinbox.setValue(
+            self._mc_margin_spinbox.value()  # carry over the margin used for the run
+        )
+
+        self._hide_widget_lists([self._voi_decision_widgets])
+        self._show_widget_lists([self._mc_review_widgets])
+
+        self._update_mc_overlay(self._crosshair_xyzt[3])
+        self._refresh_frames()
+
+    def update_mc_result(self, seg_data) -> None:
+        """Refresh the review after a re-run (MC mode stays active)."""
+        self._mc_seg_data = seg_data
+        self._mc_shifted_mask_cache.clear()
+
+        mc = getattr(seg_data, 'motion_compensation', None)
+        if mc is not None:
+            self._mc_review_ref_lbl.setText(f"Reference frame: {mc.reference_frame}")
+
+        self._mc_rerun_btn.setEnabled(True)
+        self._mc_accept_btn.setEnabled(True)
+        self._mc_reanchor_btn.setEnabled(True)
+        self._update_mc_overlay(self._crosshair_xyzt[3])
+        self._refresh_frames()
+
+    def _exit_mc_review_mode(self, frame: int) -> None:
+        """Return to drawing mode at the given frame for re-anchoring."""
+        self._mc_mode = False
+        self._mc_seg_data = None
+        self._mc_shifted_mask_cache.clear()
+
+        # Restore the original interpolated mask so the user can see the reference VOI
+        self._roi_masks_overlap.fill(0)
+
+        self._hide_widget_lists([self._mc_review_widgets])
+        self._show_widget_lists([self._voi_decision_widgets])
+
+        self.set_crosshair(t=frame)
+        self._refresh_frames()
+
+    def _on_mc_reanchor_clicked(self) -> None:
+        self._exit_mc_review_mode(self._crosshair_xyzt[3])
+
+    def _on_mc_rerun_clicked(self) -> None:
+        mc = getattr(self._mc_seg_data, 'motion_compensation', None)
+        ref_frame = mc.reference_frame if mc is not None else self._reference_frame
+        kwargs = {
+            'reference_frame': ref_frame,
+            'search_margin_ratio': self._mc_review_margin_spinbox.value(),
+            'padding': 5,
+        }
+        self._mc_rerun_btn.setEnabled(False)
+        self._mc_accept_btn.setEnabled(False)
+        self._mc_reanchor_btn.setEnabled(False)
+        self.rerun_mc_requested.emit(kwargs)
 
     def _on_back_clicked(self) -> None:
         """Handle back button click."""
@@ -1674,13 +2001,22 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     def _on_interpolation_finished(self, voi_mask: np.ndarray):
         # Record the current frame as the reference for motion compensation
         self._reference_frame = self._crosshair_xyzt[3]
-        if hasattr(self, '_mc_ref_frame_label'):
-            self._mc_ref_frame_label.setText(f"frame {self._reference_frame}")
+        self._mc_ref_frame_label.setText(f"frame {self._reference_frame}")
+
+        # Enable MC button now that a VOI exists (only if B-mode is loaded)
+        if self._bmode_image_data is not None:
+            self._run_mc_button.setEnabled(True)
+
+        # Store raw mask for bbox recomputation when spinboxes change
+        self._voi_mask_3d = voi_mask.astype(np.uint8)
 
         # Update the master overlap mask with the new 3D VOI
         self._roi_masks_overlap.fill(0)
         self._roi_masks_overlap[voi_mask, 0] = 255  # Red
         self._roi_masks_overlap[voi_mask, 3] = 128  # Alpha
+
+        # Compute and overlay bounding box + search region
+        self._compute_voi_boxes()
 
         self._set_interp_loading(False)
         self._refresh_frames()
