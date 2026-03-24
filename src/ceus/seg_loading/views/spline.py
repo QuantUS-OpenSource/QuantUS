@@ -69,6 +69,11 @@ def ellipsoidFitLS(pos):
 
 
 def calculateSpline3D(points):
+    # If the points have a 4th dimension (time), we strip it as pyvista expects (x, y, z)
+    points = np.array(points)
+    if points.shape[1] == 4:
+        points = points[:, :3]
+    
     cloud = pv.PolyData(points, force_float=False)
     volume = cloud.delaunay_3d(alpha=100)
     shell = volume.extract_geometry() # type: ignore
