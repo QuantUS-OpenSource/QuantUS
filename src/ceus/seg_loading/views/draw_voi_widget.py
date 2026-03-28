@@ -582,6 +582,15 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._mc_accept_btn.clicked.connect(self.mc_accepted.emit)
         review_layout.addWidget(self._mc_accept_btn)
 
+        self._mc_save_voi_btn = QPushButton("Save VOI (.nii.gz)")
+        self._mc_save_voi_btn.setStyleSheet(
+            "QPushButton { color: white; font-size: 13px; font-weight: bold; "
+            "background: rgb(30, 80, 160); border-radius: 10px; padding: 5px 8px; }"
+            "QPushButton:disabled { background: rgb(80,80,80); color: #888; }"
+        )
+        self._mc_save_voi_btn.clicked.connect(self._on_mc_save_voi_clicked)
+        review_layout.addWidget(self._mc_save_voi_btn)
+
         # Insert after the MC run controls (position 5)
         self._ui.verticalLayout_5.insertWidget(5, review_frame)
         review_frame.hide()
@@ -1714,17 +1723,37 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if mc is None or voi_mask is None:
             return
 
-        # Shifted VOI (cached per frame)
+        # Shifted VOI (cached per frame) — pure numpy integer shift, no scipy overhead
         if frame not in self._mc_shifted_mask_cache:
-            tx, ty, tz = mc.get_translation(frame)
-            shifted = ndimage_shift(voi_mask.astype(float), [tx, ty, tz], order=0, cval=0)
-            self._mc_shifted_mask_cache[frame] = (shifted > 0.5).astype(np.uint8)
+            tx, ty, tz = (int(round(v)) for v in mc.get_translation(frame))
+            if tx == 0 and ty == 0 and tz == 0:
+                shifted_mask = voi_mask
+            else:
+                X, Y, Z = voi_mask.shape
+                shifted_mask = np.zeros_like(voi_mask)
+                xs = slice(max(0, -tx), min(X, X - tx))
+                ys = slice(max(0, -ty), min(Y, Y - ty))
+                zs = slice(max(0, -tz), min(Z, Z - tz))
+                xd = slice(max(0, tx), min(X, X + tx))
+                yd = slice(max(0, ty), min(Y, Y + ty))
+                zd = slice(max(0, tz), min(Z, Z + tz))
+                shifted_mask[xd, yd, zd] = voi_mask[xs, ys, zs]
+            self._mc_shifted_mask_cache[frame] = shifted_mask
         shifted_mask = self._mc_shifted_mask_cache[frame]
 
-        # Red semi-transparent VOI overlay
+        cx, cy, cz = self._crosshair_xyzt[:3]
+
+        # Only write the 3 plane slices that are actually displayed — avoids O(X*Y*Z) writes
         self._roi_masks_overlap.fill(0)
-        self._roi_masks_overlap[..., 0] = shifted_mask * 255  # R
-        self._roi_masks_overlap[..., 3] = shifted_mask * 100  # A
+        ax_s = shifted_mask[:, :, cz]
+        self._roi_masks_overlap[:, :, cz, 0] = ax_s * 255
+        self._roi_masks_overlap[:, :, cz, 3] = ax_s * 100
+        sag_s = shifted_mask[cx, :, :]
+        self._roi_masks_overlap[cx, :, :, 0] = sag_s * 255
+        self._roi_masks_overlap[cx, :, :, 3] = sag_s * 100
+        cor_s = shifted_mask[:, cy, :]
+        self._roi_masks_overlap[:, cy, :, 0] = cor_s * 255
+        self._roi_masks_overlap[:, cy, :, 3] = cor_s * 100
 
         # Cyan bounding box border drawn directly into the overlay
         if not mc.tracked_bboxes:
@@ -1737,7 +1766,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         z0 = max(0, int(bbox.z_min))
         z1 = min(self._z_len - 1, int(bbox.z_max))
         CYAN = np.array([0, 192, 255, 255], dtype=np.uint8)
-        cx, cy, cz = self._crosshair_xyzt[:3]
 
         # Plane 0 (axial): varies X (dim 0), Y (dim 1); fixed Z=cz
         if z0 <= cz <= z1:
@@ -1824,6 +1852,47 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._mc_accept_btn.setEnabled(False)
         self._mc_reanchor_btn.setEnabled(False)
         self.rerun_mc_requested.emit(kwargs)
+
+    def _on_mc_save_voi_clicked(self) -> None:
+        """Save the reference VOI mask + MC vectors to a .nii.gz file chosen via dialog."""
+        import json
+        if self._mc_seg_data is None:
+            return
+        mask = getattr(self._mc_seg_data, 'seg_mask', None)
+        if mask is None:
+            self.show_error("No VOI mask to save.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save VOI", "", "NIfTI files (*.nii.gz *.nii)"
+        )
+        if not path:
+            return
+        if not (path.endswith('.nii.gz') or path.endswith('.nii')):
+            path += '.nii.gz'
+        affine = np.eye(4)
+        for i, res in enumerate(self._image_data.pixdim[:3]):
+            affine[i, i] = res
+        niiarray = nib.Nifti1Image(mask.astype(np.uint8), affine)
+        niiarray.header["descrip"] = self._image_data.scan_name
+
+        mc = getattr(self._mc_seg_data, 'motion_compensation', None)
+        if mc is not None:
+            def _bbox_to_list(b):
+                return [float(b.x_min), float(b.x_max), float(b.y_min),
+                        float(b.y_max), float(b.z_min), float(b.z_max)]
+            mc_dict = {
+                'translation_vectors': mc.translation_vectors.tolist(),
+                'reference_frame': int(mc.reference_frame),
+                'correlations': mc.correlations.tolist(),
+                'reference_bbox': _bbox_to_list(mc.reference_bbox),
+                'tracked_bboxes': [_bbox_to_list(b) for b in mc.tracked_bboxes],
+            }
+            ext = nib.nifti1.Nifti1Extension(
+                'comment', json.dumps({'motion_compensation': mc_dict}).encode()
+            )
+            niiarray.header.extensions.append(ext)
+
+        nib.save(niiarray, path)
 
     def _on_back_clicked(self) -> None:
         """Handle back button click."""
@@ -1982,7 +2051,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         affine = np.eye(4)
         for i, res in enumerate(self._image_data.pixdim[:3]):
             affine[i, i] = res
-        voi_mask = np.array(self._roi_masks_overlap[:, :, :, 0] / 255.0).astype(np.uint8)
+        voi_mask = self._voi_mask_3d if self._voi_mask_3d is not None else (self._roi_masks_overlap[:, :, :, 0] > 0).astype(np.uint8)
         niiarray = nib.Nifti1Image(voi_mask, affine)
         niiarray.header["descrip"] = self._image_data.scan_name
         nib.save(niiarray, out_path)
