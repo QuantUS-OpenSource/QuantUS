@@ -78,6 +78,85 @@ class SegLoadingWorker(QThread):
             self.error_msg.emit(f"Error loading segmentation: {e}")
 
 
+class AnalysisWorker(QThread):
+    """Worker thread for time-consuming analysis operations."""
+    finished = pyqtSignal(object)
+    error_msg = pyqtSignal(str)
+
+    def __init__(self, analysis_type: str, image_data: UltrasoundImage, 
+                 config_data: Any, seg_data: CeusSeg, 
+                 selected_functions: List[str], analysis_kwargs: Dict[str, Any]):
+        super().__init__()
+        self.analysis_type = analysis_type
+        self.image_data = image_data
+        self.config_data = config_data
+        self.seg_data = seg_data
+        self.selected_functions = selected_functions
+        self.analysis_kwargs = analysis_kwargs
+
+    def run(self):
+        """Execute the analysis in background thread."""
+        try:
+            from engines.ceus.src.time_series_analysis.options import get_analysis_types
+            all_types, _ = get_analysis_types()
+            
+            if self.analysis_type not in all_types:
+                self.error_msg.emit(f"Invalid analysis type: {self.analysis_type}")
+                return
+                
+            analysis_cls = all_types[self.analysis_type]
+            
+            # Initialize analysis
+            analysis_obj = analysis_cls(
+                self.image_data, 
+                self.seg_data, 
+                self.selected_functions, 
+                **self.analysis_kwargs
+            )
+            
+            # Execute analysis
+            # Note: For CEUS, execution might happen during init or via a specific method
+            # In time_series_analysis/curves/framework.py, init does some setup but maybe not full execution
+            if hasattr(analysis_obj, 'run'):
+                analysis_obj.run()
+            
+            self.finished.emit(analysis_obj)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.error_msg.emit(f"Error during analysis: {e}")
+
+
+class MotionCompWorker(QThread):
+    """Worker thread for motion compensation preprocessing."""
+    finished = pyqtSignal(CeusSeg)
+    error_msg = pyqtSignal(str)
+
+    def __init__(self, seg_data: CeusSeg, image_data: UltrasoundImage,
+                 bmode_image_data: UltrasoundImage, mc_kwargs: Dict[str, Any]):
+        super().__init__()
+        self.seg_data = seg_data
+        self.image_data = image_data
+        self.bmode_image_data = bmode_image_data
+        self.mc_kwargs = mc_kwargs
+
+    def run(self):
+        try:
+            seg_data = seg_preprocessing_step(
+                ['motion_compensation_3d'],
+                self.image_data,
+                self.seg_data,
+                bmode_image_data=self.bmode_image_data,
+                **self.mc_kwargs,
+            )
+            self.finished.emit(seg_data)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.error_msg.emit(f"Motion compensation failed: {e}")
+
+
 class ApplicationModel(BaseModel):
     """
     Unified application model that manages all data and business logic for the QuantUS GUI.
@@ -93,6 +172,9 @@ class ApplicationModel(BaseModel):
     image_loaded = pyqtSignal(UltrasoundImage)
     bmode_image_loaded = pyqtSignal(UltrasoundImage)
     segmentation_loaded = pyqtSignal(CeusSeg)
+    analysis_completed = pyqtSignal(object)  # Emits CurvesAnalysis
+    motion_comp_started = pyqtSignal()
+    motion_comp_completed = pyqtSignal(CeusSeg)
 
     def __init__(self):
         super().__init__()
@@ -111,6 +193,17 @@ class ApplicationModel(BaseModel):
         self._selected_seg_type: Optional[str] = None
         self._seg_data: Optional[CeusSeg] = None
         self._seg_worker: Optional[SegLoadingWorker] = None
+        
+        # Analysis state
+        self._analysis_data: Optional[CurvesAnalysis] = None
+        self._analysis_types: Dict[str, Any] = {}
+        self._analysis_functions: Dict[str, Any] = {}
+        self._selected_analysis_type: Optional[str] = None
+        self._analysis_worker: Optional[AnalysisWorker] = None
+
+        # Motion compensation state
+        self._pending_mc_kwargs: Optional[Dict[str, Any]] = None
+        self._mc_worker: Optional[MotionCompWorker] = None
         
         # Initialize loaders
         self._load_scan_loaders()
