@@ -1540,7 +1540,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Emit file_selected so the seg is loaded (no MC via save path; use Run MC button)
         self.file_selected.emit({
             'seg_path': self._saved_voi_path,
-            'seg_type': 'Manual Segmentation',
+            'seg_type': 'nifti',
         })
 
     def _on_save_voi_error(self, err):
@@ -1556,7 +1556,9 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _on_choose_folder(self):
         """Select folder to save VOI to."""
+        self._pause_animations()
         folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+        self._resume_animations()
         if folder:
             self._ui.save_folder_input.setText(folder)
 
@@ -1862,9 +1864,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if mask is None:
             self.show_error("No VOI mask to save.")
             return
+        self._pause_animations()
         path, _ = QFileDialog.getSaveFileName(
             self, "Save VOI", "", "NIfTI files (*.nii.gz *.nii)"
         )
+        self._resume_animations()
         if not path:
             return
         if not (path.endswith('.nii.gz') or path.endswith('.nii')):
@@ -1893,6 +1897,22 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             niiarray.header.extensions.append(ext)
 
         nib.save(niiarray, path)
+
+    def _pause_animations(self) -> None:
+        for anim in self._ax_sag_cor_animations:
+            if anim is not None:
+                try:
+                    anim.event_source.stop()
+                except Exception:
+                    pass
+
+    def _resume_animations(self) -> None:
+        for anim in self._ax_sag_cor_animations:
+            if anim is not None:
+                try:
+                    anim.event_source.start()
+                except Exception:
+                    pass
 
     def _on_back_clicked(self) -> None:
         """Handle back button click."""

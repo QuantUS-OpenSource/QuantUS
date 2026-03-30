@@ -131,6 +131,15 @@ class SegmentationLoadingController(BaseController):
         seg_path = load_data.get('seg_path', '')
         seg_loader_kwargs = load_data.get('seg_loader_kwargs', {})
         mc_kwargs = load_data.get('mc_kwargs', {})
+        seg_type = load_data.get('seg_type')
+
+        if seg_type:
+            # seg_type may be a raw loader key (e.g. 'nifti') rather than a display name.
+            # Set it directly on the model if it's a known loader key.
+            if seg_type in self.model._seg_loaders:
+                self.model._selected_seg_type = seg_type
+            else:
+                self.model.set_seg_type(seg_type)
 
         self.model.load_segmentation(seg_path, seg_loader_kwargs, mc_kwargs=mc_kwargs or None)
 
