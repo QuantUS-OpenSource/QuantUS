@@ -790,45 +790,44 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             self._ui.observing_label.show()
         self._on_canvas_motion(event, plane_ix)
 
-    def _on_canvas_motion(self, event, plane_ix: int):
-        """Handle mouse movement over a plane and update crosshair indices."""
-        # If no active navigation (locked), we just update the lines to follow mouse
-        if not self._crosshair_active:
-            if event.inaxes is not None and event.xdata is not None and event.ydata is not None:
-                self._update_hover_crosshair(event.xdata, event.ydata, plane_ix)
-            else:
-                # Snap back to current indices when mouse leaves the axes
-                idx_x, idx_y = self._ax_sag_cor_index_maps[plane_ix]
-                self._update_hover_crosshair(self._crosshair_xyzt[idx_x], self._crosshair_xyzt[idx_y], plane_ix)
-            return
+    def _on_canvas_motion(self, event, plane_ix: int):  # type: ignore
+        """Handle mouse movement over a plane and update crosshair indices.
 
-        # If crosshair is active (clicked), update global position
+        event.xdata maps to the first varying dimension of that plane slice,
+        event.ydata to the second. We clamp to valid ranges and call set_crosshair
+        only if the index meaningfully changed.
+        """
+        if not self._crosshair_active:
+            return
         if event.inaxes is None or event.xdata is None or event.ydata is None:
             return
 
         vary_dims = self._ax_sag_cor_index_maps[plane_ix]
         dim_x, dim_y = vary_dims[0], vary_dims[1]
+
+        # Dimension lengths mapping
         dim_lengths = [self._x_len, self._y_len, self._z_len, self._num_slices]
 
+        # Proposed new indices (int rounding & clamp)
         new_xval = int(round(event.xdata))
         new_yval = int(round(event.ydata))
-        
-        if 0 <= new_xval < dim_lengths[dim_x] and 0 <= new_yval < dim_lengths[dim_y]:
-            params = {}
-            if self._crosshair_xyzt[dim_x] != new_xval:
-                key = ['x','y','z','t'][dim_x]
-                params[key] = new_xval
-            if self._crosshair_xyzt[dim_y] != new_yval:
-                key = ['x','y','z','t'][dim_y]
-                params[key] = new_yval
-            
-            if params:
-                self.set_crosshair(**params)
-        
-        # Also sync lines with the new global position
-        if self._crosshair_visible:
-            self._update_hover_crosshair(event.xdata, event.ydata, plane_ix)
+        if new_xval < 0 or new_yval < 0:
+            return
+        if new_xval >= dim_lengths[dim_x] or new_yval >= dim_lengths[dim_y]:
+            return
 
+        # Build kwargs for set_crosshair only for dims that change
+        params = {}
+        if self._crosshair_xyzt[dim_x] != new_xval:
+            key = ['x','y','z','t'][dim_x]
+            params[key] = new_xval
+        if self._crosshair_xyzt[dim_y] != new_yval:
+            key = ['x','y','z','t'][dim_y]
+            params[key] = new_yval
+
+        if params:
+            self.set_crosshair(**params)
+        
     def _update_hover_crosshair(self, x, y, plane_ix):
         """Update crosshair lines to follow mouse hover."""
         v_line, h_line = self._ax_sag_cor_crosshair_lines[plane_ix]
