@@ -708,10 +708,10 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self._ax_sag_cor_pending = [True, True, True]
 
     def _update_scan_display(self) -> None:
-        """Sync UI labels with current crosshair indices."""
-        self._ui.sag_frame_num.setText(str(self._crosshair_xyzt[0]))
-        self._ui.cor_frame_num.setText(str(self._crosshair_xyzt[1]))
-        self._ui.ax_frame_num.setText(str(self._crosshair_xyzt[2]))
+        """Sync UI labels with current crosshair indices. Using 1-based indexing for display."""
+        self._ui.ax_frame_num.setText(str(self._crosshair_xyzt[2] + 1))
+        self._ui.sag_frame_num.setText(str(self._crosshair_xyzt[0] + 1))
+        self._ui.cor_frame_num.setText(str(self._crosshair_xyzt[1] + 1))
         
         # Update spinbox for t
         self._ui.cur_slice_spin_box.blockSignals(True)
