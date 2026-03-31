@@ -566,8 +566,12 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         artists = []
         if artist: artists.append(artist)
         if mask_artist: artists.append(mask_artist)
-        if v_line: artists.append(v_line)
-        if h_line: artists.append(h_line)
+        if v_line: 
+            v_line.set_visible(self._crosshair_visible)
+            artists.append(v_line)
+        if h_line: 
+            h_line.set_visible(self._crosshair_visible)
+            artists.append(h_line)
 
         if not self._ax_sag_cor_pending[plane_ix]:
             return artists
