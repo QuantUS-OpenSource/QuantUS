@@ -305,20 +305,22 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._ui.undo_last_roi_button,
             self._ui.construct_voi_label,
         ]
-        self._voi_decision_widgets = [
-            self._ui.restart_voi_button,
-            self._ui.save_voi_button,
-        ]
-        
+
         # Add a "Confirm & Review" button programmatically
-        self.confirm_review_button = QPushButton("Confirm && Review", parent=self._ui.horizontalLayoutWidget_4)
+        self.confirm_review_button = QPushButton("Confirm && Review")
         self.confirm_review_button.setMinimumSize(self._ui.save_voi_button.minimumSize())
         self.confirm_review_button.setMaximumSize(self._ui.save_voi_button.maximumSize())
         self.confirm_review_button.setStyleSheet(self._ui.save_voi_button.styleSheet())
-        # Move it to a reasonable position - maybe next to save button
-        self.confirm_review_button.setGeometry(self._ui.save_voi_button.geometry().translated(0, 50))
         self.confirm_review_button.hide()
-        self._voi_decision_widgets.append(self.confirm_review_button)
+        
+        # Add to the layout formally
+        self._ui.verticalLayout_2.addWidget(self.confirm_review_button)
+
+        self._voi_decision_widgets = [
+            self._ui.restart_voi_button,
+            self._ui.save_voi_button,
+            self.confirm_review_button,
+        ]
 
         self._save_voi_widgets = [
             self._ui.back_from_save_button,
