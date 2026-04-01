@@ -57,10 +57,10 @@ class AnalysisLoadingController(BaseController):
         
     def _connect_signals(self) -> None:
         """Connect signals between view coordinator and controller."""
-        # Forward view coordinator signals
-        self._view_coordinator.user_action.connect(self._on_user_action)
+        # Note: BaseController.__init__ already connects view.user_action → _on_user_action
+        # and view.close_requested → _on_close_requested. Only connect what BaseController
+        # does NOT handle.
         self._view_coordinator.back_requested.connect(self._on_back_requested)
-        self._view_coordinator.close_requested.connect(self._on_close_requested)
         
     def _setup_analysis_options(self) -> None:
         """Setup available analysis types and functions in the view."""
@@ -68,9 +68,9 @@ class AnalysisLoadingController(BaseController):
         print(f"DEBUG: Available analysis types: {list(analysis_types.keys())}")
         
         # Automatically select the best available analysis type
-        # Prefer curves_paramap, then curves, or just the first available one
+        # Prefer curves (TIC), then curves_paramap (requires extra voxel window params)
         selected_type = None
-        for preferred in ["curves_paramap", "curves", "paramap"]:
+        for preferred in ["curves", "curves_paramap", "paramap"]:
             if preferred in analysis_types:
                 selected_type = preferred
                 break
@@ -171,36 +171,30 @@ class AnalysisLoadingController(BaseController):
         self._selected_functions = selected_functions
         print(f"DEBUG: selected_functions = {selected_functions}")
         
-        # Get required parameters for selected functions
-        print(f"DEBUG: Calling model.get_required_params...")
-        required_params = self._model.get_required_params(self._selected_analysis_type, selected_functions)
-        print(f"DEBUG: required_params = {required_params}")
-        print(f"DEBUG: Calling view_coordinator.show_params_configuration...")
-        self._view_coordinator.show_params_configuration(required_params, selected_functions)
-        print(f"DEBUG: _handle_analysis_functions_selection completed")
+        # Go directly to execution (no separate params page needed for TIC)
+        self._handle_analysis_params_configuration({})
             
     def _handle_analysis_params_configuration(self, params: dict) -> None:
         """
         Handle analysis parameters configuration.
-        
+
         Args:
             params: Dictionary containing analysis parameters
         """
-        print(f"DEBUG: _handle_analysis_params_configuration called with params = {params}")
-        print(f"DEBUG: Controller received analysis_params_configured action")
         self._analysis_params = params
-        
+
         # Show execution widget with summary
         execution_summary = {
             'analysis_type': self._selected_analysis_type,
             'functions': self._selected_functions,
             'params': params
         }
-        print(f"DEBUG: Created execution_summary = {execution_summary}")
-        print(f"DEBUG: About to call view_coordinator.show_analysis_execution...")
         self._view_coordinator.show_analysis_execution(execution_summary)
-        print(f"DEBUG: show_analysis_execution called - should now show execution screen")
-        print(f"DEBUG: _handle_analysis_params_configuration completed")
+
+        # Auto-start execution when no extra params are required (e.g. TIC)
+        if not params:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self._handle_analysis_execution({}))
             
     def _handle_analysis_execution(self, execution_data: dict) -> None:
         """

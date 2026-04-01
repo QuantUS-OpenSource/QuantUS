@@ -13,7 +13,7 @@ from .mvc.base_model import BaseModel
 from engines.ceus.src.image_loading.options import get_scan_loaders
 from engines.ceus.src.seg_loading.options import get_seg_loaders
 from engines.ceus.src.time_series_analysis.options import get_analysis_types
-from engines.ceus.src.entrypoints import scan_loading_step, seg_loading_step
+from engines.ceus.src.entrypoints import scan_loading_step, seg_loading_step,seg_preprocessing_step
 from engines.ceus.src.data_objs.image import UltrasoundImage
 from engines.ceus.src.data_objs.seg import CeusSeg
 from engines.ceus.src.time_series_analysis.curves.framework import CurvesAnalysis
@@ -115,10 +115,7 @@ class AnalysisWorker(QThread):
             )
             
             # Execute analysis
-            # Note: For CEUS, execution might happen during init or via a specific method
-            # In time_series_analysis/curves/framework.py, init does some setup but maybe not full execution
-            if hasattr(analysis_obj, 'run'):
-                analysis_obj.run()
+            analysis_obj.compute_curves()
             
             self.finished.emit(analysis_obj)
             
@@ -864,6 +861,29 @@ class ApplicationModel(BaseModel):
             return self._analysis_functions[analysis_type]
         
         return self._analysis_functions
+
+    def get_required_params(self, analysis_type: str, selected_functions: List[str]) -> List[str]:
+        """
+        Get required parameters for the selected functions.
+
+        TIC requires no extra kwargs; pyradiomics requires config paths etc.
+        Return an empty list for functions with no additional required parameters.
+
+        Args:
+            analysis_type: Currently selected analysis type
+            selected_functions: List of selected function names
+
+        Returns:
+            List of required parameter names (empty if none needed)
+        """
+        # Map function name → required kwargs
+        required: dict = {
+            'pyradiomics': ['pyradiomics_config_paths', 'binwidth', 'min_intensity'],
+        }
+        params: List[str] = []
+        for func in selected_functions:
+            params.extend(required.get(func, []))
+        return params
 
     def set_analysis_data(self, analysis_data: CurvesAnalysis) -> None:
         """

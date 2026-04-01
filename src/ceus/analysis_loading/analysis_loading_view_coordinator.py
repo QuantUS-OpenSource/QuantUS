@@ -160,7 +160,7 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
             print(f"DEBUG: Creating AnalysisParamsWidget with image_data = {self._image_data is not None}")
             if self._image_data is not None:
                 print(f"DEBUG: Passing scan_name = {self._image_data.scan_name}")
-                print(f"DEBUG: Passing phantom_name = {self._image_data.phantom_name}")
+                print(f"DEBUG: Passing phantom_name = {getattr(self._image_data, 'phantom_name', 'N/A')}")
             self._params_widget = AnalysisParamsWidget(self._image_data, self._seg_data, self._config_data)
             self._params_widget.setup_ui()
             self._params_widget.connect_signals()

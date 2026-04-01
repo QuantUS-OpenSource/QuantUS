@@ -187,9 +187,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._voi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
         self._voi_drawing_widget.file_selected.connect(self._on_file_selected)
         self._voi_drawing_widget.run_mc_requested.connect(self._on_run_mc_requested)
-        self._voi_drawing_widget.mc_accepted.connect(
-            lambda: self._emit_user_action('segmentation_confirmed', self._voi_drawing_widget._mc_seg_data)
-        )
+        self._voi_drawing_widget.mc_accepted.connect(self._on_mc_accepted)
         self._voi_drawing_widget.rerun_mc_requested.connect(
             lambda kwargs: self._emit_user_action('rerun_motion_compensation', kwargs)
         )
@@ -218,6 +216,13 @@ class SegLoadingViewCoordinator(QStackedWidget):
             self._voi_drawing_widget.update_mc_result(seg_data)
         else:
             self._voi_drawing_widget.enter_mc_review_mode(seg_data)
+
+    def _on_mc_accepted(self) -> None:
+        """Handle MC acceptance: mark seg_data for MC use, then confirm segmentation."""
+        seg_data = self._voi_drawing_widget._mc_seg_data
+        if seg_data is not None:
+            seg_data.use_mc = True
+        self._emit_user_action('segmentation_confirmed', seg_data)
 
     def _on_run_mc_requested(self, voi_mask, reference_frame: int,
                              search_margin_ratio: float, padding: int) -> None:

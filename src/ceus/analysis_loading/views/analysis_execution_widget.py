@@ -6,9 +6,13 @@ It allows users to review their configuration and execute the analysis.
 """
 
 from typing import Optional, Dict, Any
-from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
+import numpy as np
+from PyQt6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout,
+                             QSizePolicy, QFileDialog)
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QFont
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 from ...mvc.base_view import BaseViewMixin
 from ..ui.analysis_execution_ui import Ui_analysisExecution
@@ -44,6 +48,7 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
         self._analysis_data: Optional[CurvesAnalysis] = None
         self._is_executing = False
         self._results_shown = False  # Track if results have been shown
+        self._curve_quant = None  # CurveQuantifications result, stored for export
         
         # Progress simulation timer
         self._progress_timer = QTimer()
@@ -80,7 +85,7 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
         # Update labels to reflect inputted image and phantom
         if self._image_data is not None:
             self._ui.image_path_input.setText(getattr(self._image_data, 'scan_name', "No image loaded"))
-            self._ui.phantom_path_input.setText(getattr(self._image_data, 'phantom_name', "No phantom loaded"))
+            self._ui.phantom_path_input.setText(getattr(self._image_data, 'phantom_name', ""))
         else:
             self._ui.image_path_input.setText("No image loaded")
             self._ui.phantom_path_input.setText("No phantom loaded")
@@ -102,15 +107,22 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
     def set_execution_summary(self, execution_summary: Dict) -> None:
         """
         Set execution summary and update the display.
-        
+
         Args:
             execution_summary: Dictionary containing execution summary data
         """
-        print(f"DEBUG: set_execution_summary called with execution_summary = {execution_summary}")
         self._execution_summary = execution_summary
-        print(f"DEBUG: Calling _create_summary_display...")
         self._create_summary_display()
-        print(f"DEBUG: set_execution_summary completed")
+
+        # If there are no extra params the controller will auto-start; show
+        # a "Running…" state immediately so the button doesn't flash.
+        if not execution_summary.get('params'):
+            self._ui.execute_button.setEnabled(False)
+            self._ui.back_button.setEnabled(False)
+            self._ui.progress_label.setText("Starting analysis...")
+            self._is_executing = True
+            self._current_progress = 0
+            self._progress_timer.start(100)
         
     def _create_summary_display(self) -> None:
         """Create the summary display from execution data."""
@@ -222,35 +234,133 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
                 
     def show_results(self, analysis_data: CurvesAnalysis) -> None:
         """
-        Show analysis results.
-        
+        Show analysis results. If TIC data is present, embed a matplotlib plot
+        with the raw TIC curve and a Gaussian fit, plus derived parameters.
+
         Args:
             analysis_data: Completed analysis data
         """
         self._analysis_data = analysis_data
-        self._results_shown = False  # Reset flag for new results
-        
-        # Update progress
+        self._results_shown = False
+
+        # Update progress bar
         self._ui.progress_bar.setValue(100)
         self._ui.progress_label.setText("Analysis completed successfully!")
-        
-        # Show finish button, hide execute button
+
+        # Swap buttons
         self._ui.execute_button.setVisible(False)
         self._ui.finish_button.setVisible(True)
         self._ui.finish_button.setEnabled(True)
-        try:
-            # Make the intent explicit in the UI
-            self._ui.finish_button.setText("Continue to Visualization")
-        except Exception:
-            # If text property isn't available for some reason, ignore
-            pass
-        
-        # Enable back button
+        self._ui.finish_button.setText("Export / Finish")
         self._ui.back_button.setEnabled(True)
-        
-        # Stop any progress simulation
         self._progress_timer.stop()
         self._is_executing = False
+
+        # Run curve quantification (lognormal fit) via the engine entrypoint
+        try:
+            curves_dict = analysis_data.curves[0] if analysis_data.curves else {}
+            tic_key = next((k for k in curves_dict if k.upper() == 'TIC'), None)
+            if tic_key is not None:
+                from engines.ceus.src.entrypoints import curve_quantification_step
+                curve_quant = curve_quantification_step(
+                    analysis_data,
+                    ['lognormal_fit_full'],
+                    None,  # no file save yet — user chooses path on Export
+                    curves_to_fit=[tic_key],
+                )
+                self._curve_quant = curve_quant  # store for export
+                self._show_tic_plot(
+                    np.array(analysis_data.time_arr, dtype=float),
+                    np.array(curves_dict[tic_key], dtype=float),
+                    curve_quant.data_dict[0],
+                    tic_key,
+                )
+        except Exception as e:
+            print(f"DEBUG: Could not run quantification / render TIC plot: {e}")
+            import traceback; traceback.print_exc()
+
+    # ------------------------------------------------------------------
+    # TIC plot with log-normal fit overlay
+    # ------------------------------------------------------------------
+
+    def _show_tic_plot(self, time_arr: np.ndarray, tic_arr: np.ndarray,
+                       quant_dict: dict, tic_key: str) -> None:
+        """Embed a matplotlib figure showing TIC + log-normal fit + parameters."""
+        from engines.ceus.src.curve_quantification.transforms import bolus_lognormal
+
+        self._clear_summary_layout()
+        layout = self._summary_layout
+
+        # Pull fitted params from the quantification result dict
+        prefix = f'_full_{tic_key}'
+        auc   = quant_dict.get(f'AUC{prefix}',   np.nan)
+        pe    = quant_dict.get(f'PE{prefix}',    np.nan)
+        tp    = quant_dict.get(f'TP{prefix}',    np.nan)
+        mtt   = quant_dict.get(f'MTT{prefix}',   np.nan)
+        t0    = quant_dict.get(f'T0{prefix}',    np.nan)
+        mu    = quant_dict.get(f'Mu{prefix}',    np.nan)
+        sigma = quant_dict.get(f'Sigma{prefix}', np.nan)
+        fit_ok = not np.isnan(auc)
+
+        if fit_ok:
+            t_fine = np.linspace(time_arr[0], time_arr[-1], 500)
+            normalizer = float(np.max(tic_arr) - np.min(tic_arr)) or 1.0
+            min_val    = float(np.min(tic_arr))
+            tic_fit = bolus_lognormal(t_fine, auc / normalizer, mu, sigma, t0) * normalizer + min_val
+
+        # ---- Matplotlib canvas ----
+        fig = Figure(figsize=(6, 3.5), facecolor='#2a2a2a')
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('#1a1a1a')
+        ax.plot(time_arr, tic_arr, color='#4fc3f7', linewidth=1.5, label='TIC (raw)')
+        if fit_ok:
+            ax.plot(t_fine, tic_fit, color='#ff8a65', linewidth=2.0, linestyle='--',
+                    label='Log-normal fit')
+        ax.set_xlabel('Time', color='white', fontsize=9)
+        ax.set_ylabel('Mean Intensity', color='white', fontsize=9)
+        ax.set_title('Time Intensity Curve', color='white', fontsize=11)
+        ax.tick_params(colors='white', labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#555555')
+        ax.legend(fontsize=8, facecolor='#333333', labelcolor='white', framealpha=0.8)
+        fig.tight_layout(pad=1.2)
+
+        canvas = FigureCanvas(fig)
+        canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(canvas)
+
+        # ---- Parameter table ----
+        params_widget = QWidget()
+        params_widget.setStyleSheet("background-color: transparent;")
+        params_layout = QHBoxLayout(params_widget)
+        params_layout.setContentsMargins(0, 4, 0, 0)
+        params_layout.setSpacing(24)
+
+        param_items = [
+            ("Peak Enhancement (PE)", f"{pe:.4f}"  if fit_ok else "N/A"),
+            ("Time to Peak (TP)",     f"{tp:.2f}"  if fit_ok else "N/A"),
+            ("Mean Transit Time (MTT)", f"{mtt:.2f}" if fit_ok else "N/A"),
+            ("Area Under Curve (AUC)", f"{auc:.4f}" if fit_ok else "N/A"),
+            ("Arrival Time (T0)",     f"{t0:.2f}"  if fit_ok else "N/A"),
+            ("μ",                     f"{mu:.3f}"  if fit_ok else "N/A"),
+            ("σ",                     f"{sigma:.3f}" if fit_ok else "N/A"),
+        ]
+        for name, value in param_items:
+            item = QWidget()
+            item.setStyleSheet("background-color: transparent;")
+            vl = QVBoxLayout(item)
+            vl.setContentsMargins(0, 0, 0, 0)
+            vl.setSpacing(2)
+            lbl = QLabel(name)
+            lbl.setStyleSheet("color: rgb(170,170,170); font-size: 10px;")
+            val = QLabel(value)
+            val.setStyleSheet("color: white; font-size: 12px; font-weight: bold;")
+            vl.addWidget(lbl)
+            vl.addWidget(val)
+            params_layout.addWidget(item)
+
+        params_layout.addStretch()
+        layout.addWidget(params_widget)
         
     def _on_execute_clicked(self) -> None:
         """Handle execute button click."""
@@ -285,9 +395,34 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
             print(f"DEBUG: Analysis already executing, ignoring click")
 
     def _on_finish_clicked(self) -> None:
-        """Handle finish button click."""
-        # Go directly to visualization without the intermediate step
-        print(f"DEBUG: Finish button clicked - going directly to visualization")
+        """Open a save dialog to export quantification results as CSV, then confirm."""
+        if hasattr(self, '_curve_quant') and self._curve_quant is not None:
+            scan_name = getattr(self._analysis_data.image_data, 'scan_name', 'tic_results') \
+                        if self._analysis_data else 'tic_results'
+            default_name = f"{scan_name}_fit_params.csv"
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Export Fit Parameters", default_name,
+                "CSV Files (*.csv);;All Files (*)"
+            )
+            if path:
+                if not path.endswith('.csv'):
+                    path += '.csv'
+                import pandas as pd
+                # Export fit parameters
+                pd.DataFrame(self._curve_quant.data_dict).to_csv(path, index=False)
+                print(f"Fit parameters exported to {path}")
+                # Export raw TIC curve alongside fit params
+                if self._analysis_data and self._analysis_data.curves:
+                    curves_dict = self._analysis_data.curves[0]
+                    tic_key = next((k for k in curves_dict if k.upper() == 'TIC'), None)
+                    if tic_key is not None:
+                        tic_path = path.replace('.csv', '_tic_curve.csv')
+                        tic_df = pd.DataFrame({
+                            'Time': self._analysis_data.time_arr,
+                            'Intensity': curves_dict[tic_key],
+                        })
+                        tic_df.to_csv(tic_path, index=False)
+                        print(f"TIC curve exported to {tic_path}")
         self._on_continue_to_visualization()
 
     def _on_continue_to_visualization(self) -> None:
