@@ -28,14 +28,19 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
     back_requested = pyqtSignal()
     
     def __init__(self, image_data: UltrasoundRfImage, seg_data: BmodeSeg, config_data: RfAnalysisConfig, 
-                 func_names: List[str], parent: Optional[QWidget] = None):
+                 available_functions: dict, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
         self._ui = Ui_analysisFunctionSelection()
         self._image_data = image_data
         self._seg_data = seg_data
         self._config_data = config_data
-        self._func_names = func_names
+        self._available_functions = available_functions
+        
+        # Organize functions by type
+        self._paramap_functions = {}
+        self._bmode_functions = {}
+        self._organize_functions_by_type()
 
         self._setup_ui()
         self._connect_signals()
@@ -55,8 +60,8 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
         self._ui.image_path_input.setText(self._image_data.scan_name)
         self._ui.phantom_path_input.setText(self._image_data.phantom_name)
 
-        # Update available functions
-        for func_name in self._func_names:
+        # Populate paramap functions list
+        for func_name in self._paramap_functions.keys():
             if func_name == "compute_power_spectra":
                 continue  # skip this function for now
             formatted_name = func_name.replace('_', '-').title()
@@ -64,21 +69,64 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             item.setSizeHint(QSize(0, 30))  # increase item height
-            self._ui.funcs_list.addItem(item)
+            self._ui.paramap_list.addItem(item)
+
+        # Populate bmode functions list
+        for func_name in self._bmode_functions.keys():
+            if func_name == "compute_power_spectra":
+                continue  # skip this function for now
+            formatted_name = func_name.replace('_', '-').title()
+            item = QListWidgetItem(formatted_name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            item.setSizeHint(QSize(0, 30))  # increase item height
+            self._ui.bmode_list.addItem(item)
 
     def _connect_signals(self) -> None:
         """Connect UI signals to internal handlers."""
         self._ui.next_button.clicked.connect(self._on_next_clicked)
         self._ui.back_button.clicked.connect(self._on_back_clicked)
 
+    def _organize_functions_by_type(self) -> None:
+        """Organize available functions by type (paramap vs bmode)."""
+        for func_name, func_info in self._available_functions.items():
+            # Determine function type from the module or function info
+            # Functions from paramap analysis go to paramap list, others to bmode
+            if hasattr(func_info, 'module') and 'paramap' in func_info.module:
+                self._paramap_functions[func_name] = func_info
+            elif hasattr(func_info, '__module__') and 'paramap' in func_info.__module__:
+                self._paramap_functions[func_name] = func_info
+            else:
+                # Default: if it contains 'radiomics' or 'bmode' in name, classify as bmode
+                if 'radiomics' in func_name.lower() or 'bmode' in func_name.lower():
+                    self._bmode_functions[func_name] = func_info
+                else:
+                    # Check module path - if not paramap, assume bmode
+                    module = getattr(func_info, '__module__', '')
+                    if 'bmode' in module.lower():
+                        self._bmode_functions[func_name] = func_info
+                    else:
+                        # Default to bmode if unclear
+                        self._bmode_functions[func_name] = func_info
+
     def _get_selected_functions(self) -> List[str]:
-        """Retrieve the list of selected analysis functions."""
+        """Retrieve the list of selected analysis functions from both lists."""
         selected = []
-        for i in range(self._ui.funcs_list.count()):
-            item = self._ui.funcs_list.item(i)
+        
+        # Get selected from paramap list
+        for i in range(self._ui.paramap_list.count()):
+            item = self._ui.paramap_list.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 func_name = item.text().replace('-', '_').lower()
                 selected.append(func_name)
+        
+        # Get selected from bmode list
+        for i in range(self._ui.bmode_list.count()):
+            item = self._ui.bmode_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                func_name = item.text().replace('-', '_').lower()
+                selected.append(func_name)
+        
         return selected
             
     def _on_next_clicked(self) -> None:

@@ -578,7 +578,58 @@
        </widget>
       </item>
       <item>
-       <widget class="QListWidget" name="funcs_list"/>
+       <layout class="QHBoxLayout" name="methods_layout">
+        <item>
+         <layout class="QVBoxLayout" name="paramap_layout">
+          <item>
+           <widget class="QLabel" name="paramap_label">
+            <property name="styleSheet">
+             <string notr="true">QLabel {
+	font-size: 18px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	font-weight: bold;
+}</string>
+            </property>
+            <property name="text">
+             <string>Paramap Methods</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignmentFlag::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QListWidget" name="paramap_list"/>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="bmode_layout">
+          <item>
+           <widget class="QLabel" name="bmode_label">
+            <property name="styleSheet">
+             <string notr="true">QLabel {
+	font-size: 18px;
+	color: rgb(255, 255, 255);
+	background-color: rgba(255, 255, 255, 0);
+	font-weight: bold;
+}</string>
+            </property>
+            <property name="text">
+             <string>B-Mode Methods</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignmentFlag::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QListWidget" name="bmode_list"/>
+          </item>
+         </layout>
+        </item>
+       </layout>
       </item>
       <item alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
        <widget class="QPushButton" name="next_button">
