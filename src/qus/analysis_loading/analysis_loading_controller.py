@@ -169,8 +169,14 @@ class AnalysisLoadingController(BaseController):
             selected_func_names: List of selected function names
         """
         self._selected_functions = selected_func_names
+        
+        # Determine analysis type for parameter lookup
+        analysis_type = self._selected_analysis_type
+        if any(f.startswith('bmode') for f in selected_func_names):
+            analysis_type = 'bmode'
+            
         # Get required parameters for selected functions
-        required_params = self._model.get_required_params(self._selected_analysis_type, selected_func_names)
+        required_params = self._model.get_required_params(analysis_type, selected_func_names)
         self._view_coordinator.show_params_configuration(required_params, selected_func_names)
             
     def _handle_analysis_execution(self, params: dict) -> None:
@@ -181,6 +187,12 @@ class AnalysisLoadingController(BaseController):
             params: Dictionary containing analysis parameters
         """
         self._analysis_params = params
+        
+        # Determine analysis type based on selected functions
+        # If any selected function starts with 'bmode_', use 'bmode' analysis type
+        analysis_type = self._selected_analysis_type
+        if any(f.startswith('bmode') for f in self._selected_functions):
+            analysis_type = 'bmode'
         
         # Handle analysis execution start
         if self._analysis_running:
@@ -200,7 +212,7 @@ class AnalysisLoadingController(BaseController):
         self._analysis_running = True
         self._analysis_completion_emitted = False  # Reset completion flag
         self._model.run_analysis(
-            self._selected_analysis_type, 
+            analysis_type, 
             self._image_data, 
             self._config_data, 
             self._seg_data, 
