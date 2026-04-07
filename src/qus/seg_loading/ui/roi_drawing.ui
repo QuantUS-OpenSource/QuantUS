@@ -1245,7 +1245,7 @@ QPushButton:pressed {
 </string>
            </property>
            <property name="text">
-            <string>Save ROI</string>
+            <string>Continue</string>
            </property>
            <property name="checkable">
             <bool>true</bool>
@@ -1520,7 +1520,7 @@ QPushButton:checked {
 }</string>
            </property>
            <property name="text">
-            <string>Save ROI</string>
+            <string>Continue</string>
            </property>
            <property name="checkable">
             <bool>false</bool>
@@ -1708,6 +1708,33 @@ QPushButton:checked {
              </property>
              <property name="text">
               <string>Save</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="skip_saving_button">
+             <property name="minimumSize">
+              <size>
+               <width>131</width>
+               <height>41</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>131</width>
+               <height>41</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string notr="true">QPushButton {
+	color: white;
+	font-size: 16px;
+	background: rgb(90, 37, 255);
+	border-radius: 15px;
+}</string>
+             </property>
+             <property name="text">
+              <string>Skip Saving</string>
              </property>
             </widget>
            </item>

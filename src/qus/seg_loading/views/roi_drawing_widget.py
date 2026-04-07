@@ -4,6 +4,8 @@ ROI Drawing Widget for Segmentation Loading
 
 import os
 import pickle
+import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -291,7 +293,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             'dest_folder_label', 'save_folder_input',
             'choose_save_folder_button', 'clear_save_folder_button',
             'roi_name_label', 'save_name_input',
-            'save_roi_button', 'back_from_save_button',
+            'save_roi_button', 'skip_saving_button', 'back_from_save_button',
         ]
         self._draw_types_objects = [
             'draw_rect_drag_type_button', 'draw_freehand_drag_type_button', 'draw_pts_type_button',
@@ -399,6 +401,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._ui.choose_save_folder_button.clicked.connect(self._select_dest_folder)
         self._ui.clear_save_folder_button.clicked.connect(self._ui.save_folder_input.clear)
         self._ui.save_roi_button.clicked.connect(self._on_export_roi)
+        self._ui.skip_saving_button.clicked.connect(self._on_skip_saving)
         self._ui.back_from_save_button.clicked.connect(self._show_draw_type_selection)
         
         # Connect brightness slider
@@ -639,6 +642,37 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             'seg_path': str(dest_path),
             'seg_loader_kwargs': {}
         })
+
+    def _on_skip_saving(self) -> None:
+        """Handle skip saving button click - allows proceeding without saving ROI to file."""
+        if self._current_roi_border == []:
+            self.show_error("No ROI drawn to skip")
+            return
+        
+        # Create temporary file in system temp directory to store unsaved ROI
+        temp_dir = tempfile.gettempdir()
+        temp_path = Path(temp_dir) / f"temp_roi_{id(self)}_{int(1e9 * time.time())}.pkl"
+        
+        x_spline, y_spline = zip(*self._current_roi_border)
+        
+        dict_to_save = {
+            "Spline X": x_spline,
+            "Spline Y": y_spline,
+            "Scan Name": self._image_data.scan_name,
+            "Phantom Name": self._image_data.phantom_name,
+            "Frame": self._frame,
+        }
+
+        try:
+            with open(temp_path, 'wb') as f:
+                pickle.dump(dict_to_save, f)
+
+            self.seg_file_selected.emit({
+                'seg_path': str(temp_path),
+                'seg_loader_kwargs': {}
+            })
+        except Exception as e:
+            self.show_error(f"Error proceeding without saving: {str(e)}")
 
 
     def _on_draw_pts(self) -> None:
