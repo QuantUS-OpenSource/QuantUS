@@ -39,15 +39,20 @@ class ExportLoadingController(QObject):
         self._export_kwargs: Dict[str, Any] = {}
         self._export_path: Optional[str] = None
 
-        # Defaults - Always use CSV export type
+        # Defaults - Determine export type based on visualization type
         export_types, _ = self._model.get_data_export_types()
-        if export_types:
-            # Always pick 'csv' if available
-            if 'csv' in export_types:
-                self._selected_export_type = 'csv'
-            else:
-                # Fallback to first available type if CSV is not available
-                self._selected_export_type = list(export_types.keys())[0]
+        
+        # Check if we are coming from a bmode visualization
+        viz_obj = self._viz_controller.get_last_visualization_obj()
+        viz_class_name = viz_obj.__class__.__name__ if viz_obj else ""
+        
+        if "Bmode" in viz_class_name and 'bmode_csv' in export_types:
+            self._selected_export_type = 'bmode_csv'
+        elif 'csv' in export_types:
+            self._selected_export_type = 'csv'
+        elif export_types:
+            # Fallback to first available type
+            self._selected_export_type = list(export_types.keys())[0]
 
         # Pre-select export functions based on chosen visualization functions
         try:
@@ -77,12 +82,17 @@ class ExportLoadingController(QObject):
 
     # ----------------------------- Mutators ----------------------------------
     def set_export_type(self, export_type: str) -> None:
-        # Always force CSV export type - ignore any attempts to change it
-        if export_type != 'csv':
-            print("Warning: Export type is locked to 'csv'. Attempted change to '{}' ignored.".format(export_type))
+        # Determine valid CSV-based export types
+        export_types, _ = self._model.get_data_export_types()
+        is_bmode = "Bmode" in (self._viz_controller.get_last_visualization_obj().__class__.__name__ if self._viz_controller.get_last_visualization_obj() else "")
         
-        # Ensure CSV is selected
-        self._selected_export_type = 'csv'
+        target_type = 'bmode_csv' if (is_bmode and 'bmode_csv' in export_types) else 'csv'
+        
+        if export_type != target_type:
+            print(f"Warning: Export type is locked to '{target_type}'. Attempted change to '{export_type}' ignored.")
+        
+        # Ensure correct CSV type is selected
+        self._selected_export_type = target_type
         
         # Recompute recommendations when type changes
         try:

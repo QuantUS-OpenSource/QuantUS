@@ -53,8 +53,14 @@ class VisualizationLoadingController(QObject):
 
     def _setup_visualization_options(self) -> None:
         """Setup available visualization functions based on analysis results."""
-        # "paramap" is the only type currently supported
-        self._selected_visualization_type = "paramap"
+        # Determine visualization type based on analysis_data type
+        # Check if function names start with 'bmode_' or if the analysis class matches
+        analysis_class_name = self._analysis_data.__class__.__name__
+        if "Bmode" in analysis_class_name:
+            self._selected_visualization_type = "bmode"
+        else:
+            self._selected_visualization_type = "paramap"
+            
         self.get_widget()  # Ensure view coordinator is created
 
         available_func_names = self._model.get_compatible_visualization_funcs(self._selected_visualization_type)
