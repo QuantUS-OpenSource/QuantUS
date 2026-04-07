@@ -70,9 +70,20 @@ class AnalysisLoadingController(BaseController):
         if paramap_type in analysis_types:
             self._selected_analysis_type = paramap_type
             if self._model.set_analysis_type(paramap_type):
-                # Get available functions for Paramap analysis
-                available_functions = self._model.get_analysis_functions(
+                # Get available functions for BOTH Paramap and B-Mode analysis
+                available_functions = {}
+                
+                # Get Paramap functions
+                paramap_functions = self._model.get_analysis_functions(
                     paramap_type, self._image_data.spatial_dims)
+                available_functions.update(paramap_functions)
+                
+                # Get B-Mode functions if available
+                if "bmode" in analysis_types:
+                    bmode_functions = self._model.get_analysis_functions(
+                        "bmode", self._image_data.spatial_dims)
+                    available_functions.update(bmode_functions)
+                
                 # Skip analysis type selection and go directly to function selection
                 self._view_coordinator.show_function_selection(available_functions)
             else:

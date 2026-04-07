@@ -90,24 +90,21 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
     def _organize_functions_by_type(self) -> None:
         """Organize available functions by type (paramap vs bmode)."""
         for func_name, func_info in self._available_functions.items():
-            # Determine function type from the module or function info
-            # Functions from paramap analysis go to paramap list, others to bmode
-            if hasattr(func_info, 'module') and 'paramap' in func_info.module:
+            # Get the module path of the function
+            module_path = getattr(func_info, '__module__', '')
+            
+            # Check if function belongs to paramap or bmode based on module path
+            if 'paramap' in module_path.lower():
                 self._paramap_functions[func_name] = func_info
-            elif hasattr(func_info, '__module__') and 'paramap' in func_info.__module__:
-                self._paramap_functions[func_name] = func_info
+            elif 'bmode' in module_path.lower():
+                self._bmode_functions[func_name] = func_info
             else:
-                # Default: if it contains 'radiomics' or 'bmode' in name, classify as bmode
-                if 'radiomics' in func_name.lower() or 'bmode' in func_name.lower():
+                # Fallback: check function name for keywords
+                if 'radiomics' in func_name.lower():
                     self._bmode_functions[func_name] = func_info
                 else:
-                    # Check module path - if not paramap, assume bmode
-                    module = getattr(func_info, '__module__', '')
-                    if 'bmode' in module.lower():
-                        self._bmode_functions[func_name] = func_info
-                    else:
-                        # Default to bmode if unclear
-                        self._bmode_functions[func_name] = func_info
+                    # Default to bmode if unclear
+                    self._bmode_functions[func_name] = func_info
 
     def _get_selected_functions(self) -> List[str]:
         """Retrieve the list of selected analysis functions from both lists."""
