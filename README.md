@@ -27,8 +27,9 @@ $PYTHON311 -m virtualenv .venv
 source .venv/bin/activate                           # Unix
 .venv\Scripts\activate                              # Windows (cmd)
 pip install --upgrade pip setuptools wheel
-pip install numpy
+pip install "numpy<2"                               # Required for pyradiomics compatibility
 pip install -r requirements.txt
+pip install cmake scikit-build-core setuptools-scm  # Build prerequisites
 pip install pyradiomics==3.0.1 --no-build-isolation
 ./saveQt.sh                                         # Unix
 .\saveQt.sh                                         # Windows (cmd)
@@ -39,12 +40,16 @@ To run the GUI, use
 ```shell
 source .venv/bin/activate                           # Unix
 .venv\Scripts\activate                              # Windows (cmd)
-python qus_gui.py | ceus_gui.py                     # Run QUS or CEUS GUI
+python qus_gui.py                                   # Run QUS GUI
+# OR
+python ceus_gui.py                                  # Run CEUS GUI
 ```
 
 ### Note for Windows users
 
 If you encounter an error during the pyradiomics install above, you will need to first install Microsoft C++ Build Tools, which can be found here: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+
+During installation, ensure the **"Desktop development with C++"** workload is selected. This provides the `nmake` and C++ compiler required to build the `pyradiomics` C-extensions.
 
 ### Keeping your version up to date
 
