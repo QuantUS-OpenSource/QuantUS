@@ -74,7 +74,7 @@ class VisualizationFunctionSelectionWidget(QWidget, BaseViewMixin):
             item = self._ui.funcs_list.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 func_name = item.text()
-                if func_name == "Parametric Maps":
+                if func_name in ["Parametric Maps", "B-Mode Statistical Maps"]:
                     func_name = "paramaps"
                 else:
                     func_name = func_name.replace('-', '_').lower()
@@ -116,7 +116,11 @@ class VisualizationFunctionSelectionWidget(QWidget, BaseViewMixin):
         self._available_functions = available_func_names
         self._ui.funcs_list.clear()
 
-        first_item = QListWidgetItem("Parametric Maps")
+        # Determine if we are in B-mode or Paramap analysis
+        analysis_class_name = self._analysis_data.__class__.__name__
+        label_text = "B-Mode Statistical Maps" if "Bmode" in analysis_class_name else "Parametric Maps"
+
+        first_item = QListWidgetItem(label_text)
         first_item.setFlags(first_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
         first_item.setCheckState(Qt.CheckState.Checked)
         first_item.setSizeHint(QSize(0, 30))
