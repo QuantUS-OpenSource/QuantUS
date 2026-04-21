@@ -75,10 +75,12 @@ class VisualizationFunctionSelectionWidget(QWidget, BaseViewMixin):
             if item.checkState() == Qt.CheckState.Checked:
                 func_name = item.text()
                 if func_name in ["Parametric Maps", "B-Mode Statistical Maps"]:
-                    func_name = "paramaps"
+                    # These categories both map to 'paramaps' visualization in the engine
+                    if "paramaps" not in selected:
+                        selected.append("paramaps")
                 else:
                     func_name = func_name.replace('-', '_').lower()
-                selected.append(func_name)
+                    selected.append(func_name)
         return selected
 
     def _on_next_clicked(self) -> None:
@@ -116,18 +118,27 @@ class VisualizationFunctionSelectionWidget(QWidget, BaseViewMixin):
         self._available_functions = available_func_names
         self._ui.funcs_list.clear()
 
-        # Determine if we are in B-mode or Paramap analysis
-        analysis_class_name = self._analysis_data.__class__.__name__
-        label_text = "B-Mode Statistical Maps" if "Bmode" in analysis_class_name else "Parametric Maps"
+        # Check for presence of both B-mode and standard Parametric results
+        has_bmode = any(name.startswith('bmode') for name in self._analysis_data.results_names)
+        has_paramap = any(not name.startswith('bmode') for name in self._analysis_data.results_names)
 
-        first_item = QListWidgetItem(label_text)
-        first_item.setFlags(first_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-        first_item.setCheckState(Qt.CheckState.Checked)
-        first_item.setSizeHint(QSize(0, 30))
-        self._ui.funcs_list.addItem(first_item)
+        if has_paramap:
+            item = QListWidgetItem("Parametric Maps")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setSizeHint(QSize(0, 30))
+            self._ui.funcs_list.addItem(item)
+            
+        if has_bmode:
+            item = QListWidgetItem("B-Mode Statistical Maps")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setSizeHint(QSize(0, 30))
+            self._ui.funcs_list.addItem(item)
+
         for func_name in self._available_functions:
             if func_name == "paramaps":
-                continue  # skip this function as it's added first
+                continue  # skip this function as it's added as the categories above
             else:
                 formatted_name = func_name.replace('_', '-').title()
                 item = QListWidgetItem(formatted_name)

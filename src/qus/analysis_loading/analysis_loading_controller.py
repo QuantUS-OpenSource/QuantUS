@@ -190,9 +190,8 @@ class AnalysisLoadingController(BaseController):
         
         # Determine analysis type based on selected functions
         # If any selected function starts with 'bmode_', use 'bmode' analysis type
+        # NOTE: If we have mixed types, we pass them all to the model which now handles multiple steps
         analysis_type = self._selected_analysis_type
-        if any(f.startswith('bmode') for f in self._selected_functions):
-            analysis_type = 'bmode'
         
         # Handle analysis execution start
         if self._analysis_running:

@@ -141,14 +141,57 @@ class AnalysisWorker(QThread):
     def run(self):
         """Execute the analysis in background thread."""        
         try:
-            analysis_data = analysis_step(
-                self.analysis_type,
-                self.image_data,
-                self.config_data,
-                self.seg_data,
-                self.analysis_functions,
-                **self.analysis_kwargs
-            )
+            # Check if we have mixed analysis types
+            bmode_funcs = [f for f in self.analysis_functions if f.startswith('bmode')]
+            paramap_funcs = [f for f in self.analysis_functions if not f.startswith('bmode')]
+            
+            analysis_data = None
+            
+            # 1. Run Paramap analysis if requested
+            if paramap_funcs:
+                analysis_data = analysis_step(
+                    'paramap',
+                    self.image_data,
+                    self.config_data,
+                    self.seg_data,
+                    paramap_funcs,
+                    **self.analysis_kwargs
+                )
+            
+            # 2. Run B-mode analysis if requested
+            if bmode_funcs:
+                bmode_analysis = analysis_step(
+                    'bmode',
+                    self.image_data,
+                    self.config_data,
+                    self.seg_data,
+                    bmode_funcs,
+                    **self.analysis_kwargs
+                )
+                
+                if analysis_data is None:
+                    analysis_data = bmode_analysis
+                else:
+                    # Merge B-mode results into the primary analysis object's windows
+                    # Ensure both analysis objects have the same number of windows
+                    if len(analysis_data.windows) == len(bmode_analysis.windows):
+                        for i in range(len(analysis_data.windows)):
+                            # Merge window results
+                            bmode_res = bmode_analysis.windows[i].results.__dict__
+                            for key, val in bmode_res.items():
+                                setattr(analysis_data.windows[i].results, key, val)
+                    
+                    # Merge single window results
+                    bmode_sw_res = bmode_analysis.single_window.results.__dict__
+                    for key, val in bmode_sw_res.items():
+                        setattr(analysis_data.single_window.results, key, val)
+                    
+                    # Merge result names
+                    analysis_data.results_names.extend(bmode_analysis.results_names)
+            
+            if analysis_data is None:
+                raise ValueError("No analysis functions selected.")
+                
             self.finished.emit(analysis_data)
             
         except Exception as e:
@@ -971,17 +1014,32 @@ class ApplicationModel(BaseModel):
         Get required parameters for selected analysis functions.
         
         Args:
-            analysis_type: Analysis type
+            analysis_type: Analysis type (ignored, will check both types)
             analysis_functions: List of selected function names
             
         Returns:
             dict: Required parameters and their default values organized by function name
         """
         try:
-            required_params = get_required_kwargs(analysis_type, analysis_functions)
-            return required_params
+            # Handle mixed analysis types (Paramap and B-mode)
+            bmode_funcs = [f for f in analysis_functions if f.startswith('bmode')]
+            paramap_funcs = [f for f in analysis_functions if not f.startswith('bmode')]
+            
+            combined_required_params = {}
+            
+            if paramap_funcs:
+                paramap_params = get_required_kwargs('paramap', paramap_funcs)
+                combined_required_params.update(paramap_params)
+            
+            if bmode_funcs:
+                bmode_params = get_required_kwargs('bmode', bmode_funcs)
+                combined_required_params.update(bmode_params)
+                
+            return combined_required_params
         except Exception as e:
             print(f"Error getting required parameters: {e}")
+            import traceback
+            traceback.print_exc()
             return {}
 
     def run_analysis(self, analysis_type: str, image_data: UltrasoundRfImage, config_data: RfAnalysisConfig,
