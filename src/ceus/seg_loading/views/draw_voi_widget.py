@@ -134,6 +134,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     segmentation_completed = pyqtSignal(object) # CeusSeg object
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
+    apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
 
     def __init__(self, image_data: UltrasoundImage, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
@@ -200,6 +201,13 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._update_scan_display()  # Initial UI update
         self._refresh_frames()       # Mark all planes for first update
+
+    def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
+        """Update the displayed image data, e.g. after preprocessing."""
+        assert enhanced_frame.shape[:-1] == self._pix_data.shape[:-1], "Enhanced pixel data must have the same shape as original"
+        self._enhanced_cache = enhanced_frame[:, :, :, 0]  # Store only the current time frame in cache
+        self._enhanced_cache_frame = frame
+        self._refresh_frames()
 
     # ======================= Matplotlib Mouse Interaction ===================
     def _connect_matplotlib_events(self):

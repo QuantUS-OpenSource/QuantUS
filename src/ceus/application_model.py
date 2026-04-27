@@ -380,6 +380,37 @@ class ApplicationModel(BaseModel):
         except Exception as e:
             self._emit_error(f"Error during preprocessing: {e}")
 
+    def apply_preprocessing_preview(self, func_configs: List[Dict[str, Any]], image_data: Optional[UltrasoundImage] = None) -> UltrasoundImage:
+        """
+        Apply preprocessing to the given UltrasoundImage.
+        This does not modify the image data in the model.
+        
+        Args:
+            func_configs: List of dicts with 'name' and 'kwargs' for each function
+            image_data: Optional UltrasoundImage to preprocess (if None, uses current image)
+        """
+        if not image_data and not self._image_data:
+            self._emit_error("No image loaded to preprocess")
+            return
+        
+        processed_image = image_data if image_data else self._image_data
+            
+        try:
+            funcs = self.get_preprocessing_options()
+            
+            for config in func_configs:
+                name = config['name']
+                kwargs = config.get('kwargs', {})
+                if name in funcs:
+                    processed_image = funcs[name](processed_image, **kwargs)
+                else:
+                    print(f"WARNING: Preprocessing function {name} not found")
+
+        except Exception as e:
+            self._emit_error(f"Error during preprocessing: {e}")
+
+        return processed_image
+
     def enhance_image(self, image: UltrasoundImage, func_configs: List[Dict[str, Any]]) -> UltrasoundImage:
         """
         Enhance a given UltrasoundImage and return the result.

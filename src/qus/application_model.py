@@ -8,6 +8,7 @@ replacing the individual models for each component.
 import os
 import numpy as np
 from typing import Dict, Any, Optional, Tuple
+import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from src.qus.mvc.base_model import BaseModel
@@ -1080,3 +1081,20 @@ class ApplicationModel(BaseModel):
             self._analysis_worker.quit()
             self._analysis_worker.wait()
             self._analysis_worker = None
+
+    def get_numerical_summary(self) -> Dict[str, float]:
+        """Get numerical values to display in visualization screen."""
+        if not self._analysis_data:
+            return {}
+        
+        summary = {}
+
+        for method_name in self._analysis_data.windows[0].results.__dict__.keys():            
+            # Skip results we don't have parametric maps for (e.g. string or array results that are not reduced to a single value)
+            if isinstance(getattr(self._analysis_data.windows[0].results, method_name), (str, list, np.ndarray)):
+                continue
+
+            method_arr = [getattr(window.results, method_name) for window in self._analysis_data.windows if hasattr(window.results, method_name)]
+            summary[f"Av. {method_name.upper()}"] = np.mean(np.array(method_arr))
+
+        return summary
