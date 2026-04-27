@@ -64,6 +64,8 @@ class SegmentationLoadingController(BaseController):
             self.view.show_roi_drawing(action_data)
         elif action_name == 'load_segmentation':
             self._handle_segmentation_loading(action_data)
+        elif action_name == 'apply_preprocs_preview':
+            self._handle_preprocs_preview(action_data)
         elif action_name == 'segmentation_confirmed':
             # Ensure the model has the confirmed segmentation data
             # This is especially important for manually drawn segmentations
@@ -71,7 +73,25 @@ class SegmentationLoadingController(BaseController):
                 self.model.set_manual_segmentation(action_data)
         else:
             raise ValueError(f"Unknown action: {action_name}")
-            
+        
+    def _handle_preprocs_preview(self, preproc_data_list: list) -> None:
+        """
+        Handle multiple preprocessing functions update request.
+        
+        Args:
+            preproc_data_list: List of dictionaries with 'name' and 'kwargs' keys
+        """
+        image_data = preproc_data_list[0]['image_data']
+        frame_ix = preproc_data_list[0]['frame_ix']
+
+        for preproc_data in preproc_data_list:
+            preproc_data.pop('image_data', None)
+            preproc_data.pop('frame_ix', None)
+
+        image_data = self.model.apply_preprocessing_preview(preproc_data_list, image_data)
+
+        self.view.preview_modified_image(image_data, frame_ix)
+        
     def _handle_seg_type_selection(self, seg_type_name: str) -> None:
         """
         Handle segmentation type selection.
@@ -88,11 +108,6 @@ class SegmentationLoadingController(BaseController):
                     self.view.show_voi_drawing()
                 else:
                     self.view.show_roi_drawing()
-                #         raise ValueError("Unsupported RF data dimensions for manual segmentation")
-                # elif image_data.spatial_dims == 3:
-                #     raise NotImplementedError("Manual segmentation for 3D data not implemented")
-                # else:
-                #     raise ValueError("Unsupported spatial dimensions for manual segmentation")
             else:
                 # Update view with file extensions for this segmentation type
                 file_extensions = self.model.get_seg_file_extensions()
