@@ -8,6 +8,8 @@ from .seg_loading_view_coordinator import SegLoadingViewCoordinator
 # Individual widget components
 from .views.seg_type_selection_widget import SegTypeSelectionWidget
 from .views.seg_file_selection_widget import SegFileSelectionWidget
+from .views.seg_preview_widget import SegPreviewWidget
+from .views.draw_roi_widget import DrawROIWidget
 
 __all__ = [
     'SegmentationLoadingModel', 

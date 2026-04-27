@@ -4,23 +4,26 @@ Segmentation File Selection Widget for Segmentation Loading
 
 from pathlib import Path
 from typing import Optional, Tuple, List
-import numpy as np
-import nibabel as nib
-from scipy.ndimage import binary_fill_holes
-import matplotlib.pyplot as plt
-import matplotlib.animation as anim
+from scipy.ndimage import binary_fill_holes, binary_erosion
 from matplotlib.backends.backend_qtagg import FigureCanvas
 from matplotlib.path import Path as Mpl_Path
 from matplotlib.colors import LinearSegmentedColormap
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox, QPushButton
+from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
+
+import numpy as np
+import nibabel as nib
+import matplotlib.pyplot as plt
+import matplotlib.animation as anim
 import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider, QVBoxLayout, QFrame, QCheckBox
-from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
+import traceback
 
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_voi_ui import Ui_voi_drawer
-from engines.ceus.src.data_objs import UltrasoundImage
+from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
 from .spline import calculateSpline3D, calculateSpline
+from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
 
 # Philips CEUS Colormap: Grayscale -> Red -> Yellow
 philips_colors = [
@@ -98,7 +101,6 @@ class VoiInterpolationWorker(QThread):
             self.finished.emit(voi_mask)
 
         except Exception as e:
-            import traceback
             traceback.print_exc()
             self.error_msg.emit(f"Error interpolating VOI: {e}")
 
@@ -129,6 +131,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     
     # Signals for communicating with controller
     file_selected = pyqtSignal(dict)  # {'seg_path': str, 'seg_type': str}
+    segmentation_completed = pyqtSignal(object) # CeusSeg object
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
     apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
@@ -177,7 +180,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Per-plane resources (axial, sagittal, coronal)
         self._ax_sag_cor_matplotlib_canvases = [None, None, None]
         self._ax_sag_cor_planes = (None, None, None)
-        self._ax_sag_cor_index_maps = ((0, 1), (2, 1), (2, 0))  # dims that vary per plane
+        self._ax_sag_cor_index_maps = ((0, 1), (2, 1), (0, 2))  # (horiz_dim, vert_dim)
         self._ax_sag_cor_animations = [None, None, None]
         self._ax_sag_cor_plane_artists = [None, None, None]
         self._ax_sag_cor_crosshair_lines = [(None, None), (None, None), (None, None)]
@@ -196,8 +199,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._connect_signals()
         self._connect_matplotlib_events()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._update_scan_display() # Initial UI update
-        self._refresh_frames()      # Mark all planes for first update
+        self._update_scan_display()  # Initial UI update
+        self._refresh_frames()       # Mark all planes for first update
 
     def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
         """Update the displayed image data, e.g. after preprocessing."""
@@ -310,10 +313,23 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._ui.undo_last_roi_button,
             self._ui.construct_voi_label,
         ]
+
+        # Add a "Confirm & Review" button programmatically
+        self.confirm_review_button = QPushButton("Confirm && Review")
+        self.confirm_review_button.setMinimumSize(self._ui.save_voi_button.minimumSize())
+        self.confirm_review_button.setMaximumSize(self._ui.save_voi_button.maximumSize())
+        self.confirm_review_button.setStyleSheet(self._ui.save_voi_button.styleSheet())
+        self.confirm_review_button.hide()
+        
+        # Add to the layout formally
+        self._ui.verticalLayout_2.addWidget(self.confirm_review_button)
+
         self._voi_decision_widgets = [
             self._ui.restart_voi_button,
             self._ui.save_voi_button,
+            self.confirm_review_button,
         ]
+
         self._save_voi_widgets = [
             self._ui.back_from_save_button,
             self._ui.dest_folder_label,
@@ -492,29 +508,23 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             
         try:
             pix = self._image_data.pixdim
-            # Index 0: Axial (Plane 0)
+            # Index 0: Axial (Plane 0) -> (Y, X) -> Rows=Y, Cols=X -> dy / dx
             if self._ax_sag_cor_matplotlib_canvases[0]:
                 dx, dy = pix[0], pix[1]
                 aspect = (dy / dx if dx != 0 else 1.0) * self._width_scale_axial
-                fig0 = self._ax_sag_cor_matplotlib_canvases[0].figure
-                if fig0.axes:
-                    fig0.axes[0].set_aspect(aspect)
+                self._ax_sag_cor_matplotlib_canvases[0].figure.gca().set_aspect(aspect)
             
-            # Index 1: Sagittal (Plane 1) 
+            # Index 1: Sagittal (Plane 1) -> 90 CW Rotation -> (Y, Z) -> Rows=Y, Cols=Z -> dy / dz
             if self._ax_sag_cor_matplotlib_canvases[1]:
                 dy, dz = pix[1], pix[2]
                 aspect = (dy / dz if dz != 0 else 1.0) * self._width_scale_sagittal
-                fig1 = self._ax_sag_cor_matplotlib_canvases[1].figure
-                if fig1.axes:
-                    fig1.axes[0].set_aspect(aspect)
+                self._ax_sag_cor_matplotlib_canvases[1].figure.gca().set_aspect(aspect)
                 
-            # Index 2: Coronal (Plane 2)
+            # Index 2: Coronal (Plane 2) -> (Z, X) -> Rows=Z, Cols=X -> dz / dx
             if self._ax_sag_cor_matplotlib_canvases[2]:
                 dx, dz = pix[0], pix[2]
-                aspect = (dx / dz if dz != 0 else 1.0) * self._width_scale_coronal
-                fig2 = self._ax_sag_cor_matplotlib_canvases[2].figure
-                if fig2.axes:
-                    fig2.axes[0].set_aspect(aspect)
+                aspect = (dz / dx if dx != 0 else 1.0) * self._width_scale_coronal
+                self._ax_sag_cor_matplotlib_canvases[2].figure.gca().set_aspect(aspect)
                 
             for canvas in self._ax_sag_cor_matplotlib_canvases:
                 if canvas:
@@ -583,7 +593,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 ax = fig.add_subplot(111)
                 ax.axis('off')
                 # Get initial slice
-                slice_arr = self._get_plane_slice(plane_ix, initializing=True)
+                slice_arr = self._get_plane_slice(plane_ix)
                 mask_arr = self._get_mask_slice(plane_ix)
 
                 current_cmap = philips_cmap if self._use_philips_ceus else 'gray'
@@ -605,21 +615,19 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             except Exception as e:
                 self.show_error(f"Error initializing plane display {plane_ix}: {e}")
 
-    def _get_plane_slice(self, plane_ix: int, initializing=False):
+    def _get_plane_slice(self, plane_ix: int):
         """Return 2D numpy slice for given plane index based on current crosshair."""
         idx = self._get_plane_indices(plane_ix)
         current_t = self._crosshair_xyzt[3]
         
         # Check if we need to enhance a new frame
-        if not initializing and (self._enhanced_cache is None or self._enhanced_cache_frame != current_t):
+        if self._enhanced_cache is None or self._enhanced_cache_frame != current_t:
             # Get the 3D volume for current time frame
             current_frame_3d = self._pix_data[:, :, :, current_t]
             
             # Enhance the entire 3D volume ONCE per frame
-            self._enhance_volume(current_frame_3d) # performs enhancement SYNCHRONOUSLY
+            self._enhanced_cache = self._enhance_volume(current_frame_3d)
             self._enhanced_cache_frame = current_t
-        elif initializing:
-            self._enhanced_cache = self._image_data.pixel_data[:, :, :, current_t]  # Cache the initial frame without enhancement for faster startup
         
         # Extract the 2D slice from cached enhanced volume
         slice_idx = list(idx[:3])  # Remove time dimension
@@ -627,49 +635,41 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         
         if arr.ndim != 2:
             arr = arr.squeeze()
-        # Axial plane (index 0) needs transpose for correct orientation
-        if plane_ix == 0:
-            arr = arr.T
-        return arr
+        # All planes need transpose to match (Vertical, Horizontal) orientation.
+        # Sagittal (plane 1) specifically needs a 90 deg clockwise rotation.
+        arr_t = arr.T
+        if plane_ix == 1:
+            return np.rot90(arr_t, k=-1)
+        return arr_t
     
-    def _enhance_volume(self, volume_3d: np.ndarray) -> None:
+    def _enhance_volume(self, volume_3d: np.ndarray) -> np.ndarray:
         """Enhance a 3D image volume using predefined enhancement methods in the backend engine."""
         # Create a temporary UltrasoundImage for the current frame
         temp_im = UltrasoundImage(self._image_data.scan_path)
-        temp_im.pixel_data = volume_3d.T[None].T.copy()  # Add back time dimension for processing
+        temp_im.pixel_data = volume_3d
         temp_im.pixdim = self._image_data.pixdim
         temp_im.frame_rate = self._image_data.frame_rate
-
-        clahe_preproc_dict = {
-            'name': 'enhance_clahe',
-            'image_data': temp_im,
-            'frame_ix': self._crosshair_xyzt[3],
-            'kwargs': {
-                'clip_limit': self._clahe_clip_limit,
-                'tile_grid_size': (8, 8),
-            }
-        }
-
-        gamma_preproc_dict = {
-            'name': 'enhance_gamma',
-            'image_data': None,  # signal to reuse the already CLAHE-enhanced image (all preprocs in the same batch share the same image input)
-            'frame_ix': self._crosshair_xyzt[3],
-            'kwargs': {
-                'gamma': self._gamma,
-            }
-        }
-
-        preproc_dicts = [clahe_preproc_dict, gamma_preproc_dict]
-        self.apply_preprocs_preview.emit(preproc_dicts) # synchronous call to apply the enhancements and update the cache via the connected slot
+        
+        # Apply backend engine functions directly on the UltrasoundImage object
+        temp_im = enhance_clahe(temp_im, clip_limit=self._clahe_clip_limit)
+        temp_im = enhance_gamma(temp_im, gamma=self._gamma)
+        
+        return temp_im.pixel_data
 
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
         idx = self._get_plane_indices(plane_ix)[:-1] # no time dimension
         arr = self._roi_masks_overlap[idx]
-        # Mask needs transpose for correct orientation to match the image slice
-        if plane_ix == 0:
-            arr = np.transpose(arr, (1, 0, 2))  # Transpose for axial plane
-        return arr
+        
+        # Consistent mapping for all planes as areas:
+        # Axial: (X, Y) slice -> want (Y, X) for imshow -> transpose (1, 0, 2)
+        # Sagittal: (Y, Z) slice -> want (Z, Y) then rot -> transpose (1, 0, 2) + rot90
+        # Coronal: (X, Z) slice -> want (Z, X) for imshow -> transpose (1, 0, 2)
+        
+        arr_reg = np.transpose(arr, (1, 0, 2))
+        if plane_ix == 1:
+            return np.rot90(arr_reg, k=-1)
+        return arr_reg
 
     def _get_plane_indices(self, plane_ix: int) -> Tuple[int]:
         """Return a list of indices for the given plane."""
@@ -837,6 +837,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.back_from_save_button.clicked.connect(self._on_back_from_save)
         self._ui.toggle_crosshair_visibility_button.clicked.connect(self._on_toggle_crosshair_visibility)
         self._ui.save_voi_button.clicked.connect(self._on_save_voi_clicked)
+        self.confirm_review_button.clicked.connect(self._on_confirm_review_clicked)
         
         # Configure slice/time controls
         self._ui.cur_slice_slider.setMinimum(0)
@@ -948,9 +949,16 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if plane_ix == 0:  # Axial
             target_slice_mask[:, :, fixed_val] = mask_2d.T
         elif plane_ix == 1:  # Sagittal
-            target_slice_mask[fixed_val, :, :] = mask_2d
+            # mask_2d from meshgrid (Y_len, X_len) where X_idx=z, Y_idx=y
+            # In sagittal plane_ix=1: vary_x=z(2), vary_y=y(1). fixed=x(0)
+            # mask_2d shape is (y_len, z_len).
+            # Meshgrid with 'xy' returns (rows=Y, cols=X), so mask_2d is (Y, Z).
+            # The display uses rot90(arr.T, k=-1) which is (Z, Y).
+            # To match the display, we must rot90 back: rot90(mask_2d, k=1).T
+            target_slice_mask[fixed_val, :, :] = np.rot90(mask_2d, k=1).T
         elif plane_ix == 2:  # Coronal
-            target_slice_mask[:, fixed_val, :] = mask_2d
+            # mask_2d from meshgrid (Y_len, X_len) where X_idx=x, Y_idx=z
+            target_slice_mask[:, fixed_val, :] = mask_2d.T
 
         # Apply colors to the RGBA mask where the 3D mask is true
         current_roi_mask_rgba[target_slice_mask, 0] = 255  # Red
@@ -1029,6 +1037,27 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._hide_widget_lists([self._voi_decision_widgets])
         self._show_widget_lists([self._save_voi_widgets, self._voi_alpha_widgets])
         self._refresh_frames()
+
+    def _on_confirm_review_clicked(self):
+        """Handle confirmation and transition to formal review screen."""
+        
+        # Create CeusSeg object from current mask
+        seg_data = CeusSeg()
+        seg_data.seg_name = f"Manual_{self._image_data.scan_name}"
+        # Extract the binary mask from the overlap RGBA buffer (red channel > 0)
+        seg_data.seg_mask = (self._roi_masks_overlap[:, :, :, 0] > 0).astype(np.uint8)
+        seg_data.pixdim = self._image_data.pixdim[:3]
+        
+        # Preserve current visualization parameters for the preview step
+        seg_data.clahe_clip_limit = self._clahe_clip_limit
+        seg_data.gamma = self._gamma
+        seg_data.width_scale_axial = self._width_scale_axial
+        seg_data.width_scale_sagittal = self._width_scale_sagittal
+        seg_data.width_scale_coronal = self._width_scale_coronal
+        seg_data.use_philips_ceus = self._use_philips_ceus
+        
+        # Emit signal to coordinator
+        self.segmentation_completed.emit(seg_data)
 
     def _on_export_voi_clicked(self):
         # Show saving label, hide save widgets
@@ -1201,28 +1230,25 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _on_interpolate_voi(self):
         """Handle VOI interpolation from the drawn 2D ROIs."""
-        if len(self._drawn_rois) == 2 or not len(self._drawn_rois):
-            print("At least 3 ROIs on different planes or 1 ROI is required for 3D interpolation.")
+        if len(self._drawn_rois) < 1:
+            print("At least 1 ROI is required for 3D interpolation.")
             return
 
         # Combine all points from all drawn ROIs
         all_points = []
-        for _, pts, _ in self._drawn_rois:
-            xyz_pts = np.array(pts)[:, :3].T
-            x_interp, y_interp, z_interp = calculateSpline(*xyz_pts)
-            all_points.extend(zip(x_interp, y_interp, z_interp))
+        for plane_num, pts, _ in self._drawn_rois:
+            all_points.extend(pts)
 
         # Ensure no duplicate points are used for interpolation
         unique_points = self._remove_duplicates(all_points)
-        if len(unique_points) < 4:
+        if len(unique_points) < 3:
             self.show_error("Interpolation Error", "Not enough unique points for 3D spline interpolation.")
             return
 
         # Perform 3D spline interpolation
-        x_coords, y_coords, z_coords = zip(*unique_points)
-        coords = np.transpose([x_coords, y_coords, z_coords])
+        coords = np.array(unique_points)
         
-        if len(self._drawn_rois) > 2:
+        if len(self._drawn_rois) > 1:
             # Stop any existing worker
             if self._voi_interpolation_worker and self._voi_interpolation_worker.isRunning():
                 self._voi_interpolation_worker.quit()
@@ -1241,22 +1267,14 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._set_interp_loading(True)
             self._voi_interpolation_worker.start()
         else:
+            # Single ROI Case - just fill the area of that single mesh
             voi_mask = np.zeros((self._x_len, self._y_len, self._z_len), dtype=bool)
 
-            # For simplicity, we'll mark the voxels the spline passes through.
-            # A more robust solution would involve filling the volume enclosed by the spline surface.
-            interp_points = np.round(np.array(list(coords))).astype(int)
-
-            # Clamp points to be within bounds
-            interp_points[:, 0] = np.clip(interp_points[:, 0], 0, self._x_len - 1)
-            interp_points[:, 1] = np.clip(interp_points[:, 1], 0, self._y_len - 1)
-            interp_points[:, 2] = np.clip(interp_points[:, 2], 0, self._z_len - 1)
-
-            voi_mask[interp_points[:, 0], interp_points[:, 1], interp_points[:, 2]] = True
+            # For a single ROI, we extract the boolean mask from the stored RGBA mask
+            # The red channel (index 0) is set to 255 for the drawn mask.
+            _, _, roi_mask_rgba = self._drawn_rois[0]
+            voi_mask = roi_mask_rgba[:, :, :, 0] > 0
             
-            # Fill holes in the resulting mask to create a solid volume
-            voi_mask = _smooth_3d_mask(voi_mask)
-            self._hide_widget_lists([self._drawing_widgets])
             self._on_interpolation_finished(voi_mask)
 
     def _save_voi(self):
@@ -1273,13 +1291,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         out_path = Path(self._ui.save_folder_input.text()) / out_name
 
+        # Construct affine matching standard NIfTI orientation
         affine = np.eye(4)
         for i, res in enumerate(self._image_data.pixdim[:3]):
             affine[i, i] = res
-        voi_mask = np.array(self._roi_masks_overlap[:, :, :, 0] / 255.0).astype(np.uint8)
-        niiarray = nib.Nifti1Image(voi_mask, affine)
-        niiarray.header["descrip"] = self._image_data.scan_name
-        nib.save(niiarray, out_path)
+            
+        # Ensure binary mask is correctly extracted from the overlay buffer
+        voi_mask = (self._roi_masks_overlap[:, :, :, 0] > 0).astype(np.uint8)
+        
+        # Save as NIfTI image
+        nii_img = nib.Nifti1Image(voi_mask, affine)
+        nii_img.header["descrip"] = self._image_data.scan_name
+        nib.save(nii_img, out_path)
 
     def _set_interp_loading(self, loading_state: bool) -> None:
         """Set the interpolation loading state."""

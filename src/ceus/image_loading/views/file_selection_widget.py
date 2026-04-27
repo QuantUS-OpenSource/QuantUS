@@ -116,7 +116,8 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
 
     def _on_choose_image_path(self) -> None:
         """Handle image file selection."""
-        if self._file_extensions == ["FOLDER"]:
+        is_folder = any(ext.upper() == "FOLDER" for ext in self._file_extensions)
+        if is_folder:
             dir_name = QFileDialog.getExistingDirectory(self, "Select Directory")
             if dir_name:
                 self._ui.image_path_input.setText(dir_name)
@@ -133,12 +134,16 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         if not os.path.exists(image_path):
             self.show_error(f"Image file does not exist: {os.path.basename(image_path)}")
             return
-        if not image_path.endswith(tuple(self._file_extensions)) and self._file_extensions != ['FOLDER']:
-            self.show_error(f"Image file must have one of the following extensions: {', '.join(self._file_extensions)}")
-            return
-        if self._file_extensions == ["FOLDER"] and not os.path.isdir(image_path):
-            self.show_error("Input path must be a folder!")
-            return
+            
+        is_folder = any(ext.upper() == "FOLDER" for ext in self._file_extensions)
+        if not is_folder:
+            if not image_path.endswith(tuple(self._file_extensions)):
+                self.show_error(f"Image file must have one of the following extensions: {', '.join(self._file_extensions)}")
+                return
+        else:
+            if not os.path.isdir(image_path):
+                self.show_error("Input path must be a folder!")
+                return
             
         self.clear_error()
         
