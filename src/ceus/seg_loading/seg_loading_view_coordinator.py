@@ -194,6 +194,8 @@ class SegLoadingViewCoordinator(QStackedWidget):
         """Show the preprocessed data in the VOI drawing widget."""
         if self._voi_drawing_widget:
             self._voi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)
+        elif self._roi_drawing_widget:
+            self._roi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)
         else:
             raise RuntimeError("VOI drawing widget not initialized")
 
@@ -205,6 +207,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._roi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
         self._roi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._roi_drawing_widget.close_requested.connect(self.close_requested.emit)
+        self._roi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
 
         # Add to stack and show
         self.addWidget(self._roi_drawing_widget)

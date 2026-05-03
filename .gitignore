@@ -8,3 +8,4 @@ fixed_wheels/
 .DS_Store
 *.so
 Visualization_Results/
+/**/*_ui.py
