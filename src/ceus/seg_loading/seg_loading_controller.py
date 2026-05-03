@@ -35,15 +35,15 @@ class SegmentationLoadingController(BaseController):
             
         super().__init__(model, view)
         
-        # # Connect to model signals for automatic view updates
-        # self._connect_model_signals()
+        # Connect to model signals for automatic view updates
+        self._connect_model_signals()
         
         # Initialize view with segmentation loaders
         self._initialize_view()
         
-    # def _connect_model_signals(self) -> None:
-    #     """Connect to model signals for automatic view updates."""
-    #     self.model.segmentation_loaded.connect(self.view.show_segmentation_preview)
+    def _connect_model_signals(self) -> None:
+        """Connect to model signals for automatic view updates."""
+        self.model.segmentation_loaded.connect(self.view.show_segmentation_preview)
         
     def _initialize_view(self) -> None:
         """Initialize the view with data from the model."""
@@ -67,7 +67,10 @@ class SegmentationLoadingController(BaseController):
         elif action_name == 'apply_preprocs_preview':
             self._handle_preprocs_preview(action_data)
         elif action_name == 'segmentation_confirmed':
-            pass # Handle confirmation action in the application controller
+            # Ensure the model has the confirmed segmentation data
+            # This is especially important for manually drawn segmentations
+            if action_data:
+                self.model.set_manual_segmentation(action_data)
         else:
             raise ValueError(f"Unknown action: {action_name}")
         

@@ -10,12 +10,13 @@ from typing import Any, Optional, List, Dict
 from PyQt6.QtWidgets import QWidget, QStackedWidget
 from PyQt6.QtCore import pyqtSignal
 
-from quantus.gui.mvc.base_view import BaseViewMixin
+from ..mvc.base_view import BaseViewMixin
 from .views.analysis_function_selection_widget import AnalysisFunctionSelectionWidget
-from quantus.gui.config_loading.views.analysis_params_widget import AnalysisParamsWidget
+from .views.analysis_params_widget import AnalysisParamsWidget
 from .views.analysis_execution_widget import AnalysisExecutionWidget
-from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
-from quantus.analysis.paramap.framework import ParamapAnalysis
+from engines.ceus.src.data_objs.image import UltrasoundImage
+from engines.ceus.src.data_objs.seg import CeusSeg
+from engines.ceus.src.time_series_analysis.curves.framework import CurvesAnalysis
 
 
 class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
@@ -40,7 +41,7 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
     # ============================================================================
     
     
-    def __init__(self, image_data: UltrasoundRfImage, seg_data: BmodeSeg, config_data: RfAnalysisConfig, parent: Optional[QWidget] = None):
+    def __init__(self, image_data: UltrasoundImage, seg_data: CeusSeg, config_data, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.__init_base_view__(parent)
         self._image_data = image_data
@@ -48,11 +49,6 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self._config_data = config_data
         
         print(f"DEBUG: AnalysisLoadingViewCoordinator - image_data = {image_data is not None}")
-        if image_data is not None:
-            print(f"DEBUG: AnalysisLoadingViewCoordinator - scan_name = {image_data.scan_name}")
-            print(f"DEBUG: AnalysisLoadingViewCoordinator - phantom_name = {image_data.phantom_name}")
-        else:
-            print(f"DEBUG: AnalysisLoadingViewCoordinator - image_data is None!")
         
         # Widget instances
         self._function_selection_widget: Optional[AnalysisFunctionSelectionWidget] = None
@@ -63,7 +59,7 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self._selected_analysis_type: Optional[str] = None
         self._selected_functions: List[str] = []
         self._analysis_params: dict = {}
-        self._analysis_data: Optional[ParamapAnalysis] = None
+        self._analysis_data: Optional[CurvesAnalysis] = None
 
         # Note: Analysis type selection is now skipped - Paramap is automatically selected
         # The controller will call show_function_selection directly
@@ -106,12 +102,16 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
             error_message: Error message to display
         """
         current_widget: BaseViewMixin = self.currentWidget()
-        current_widget.show_error(error_message)
+        if current_widget:
+            current_widget.show_error(error_message)
+        else:
+            print(f"ERROR (no active widget): {error_message}")
 
     def clear_error(self) -> None:
         """Clear error message in the current widget."""
         current_widget: BaseViewMixin = self.currentWidget()
-        current_widget.clear_error()
+        if current_widget:
+            current_widget.clear_error()
 
     # ============================================================================
     # NAVIGATION METHODS - Methods to show different widgets
@@ -208,7 +208,7 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self._execution_widget.clear_error()
         print(f"DEBUG: show_analysis_execution completed - execution screen should be visible")
 
-    def show_analysis_results(self, analysis_data: ParamapAnalysis) -> None:
+    def show_analysis_results(self, analysis_data: CurvesAnalysis) -> None:
         """
         Show analysis results in the execution widget.
         
@@ -260,7 +260,7 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self._emit_user_action("analysis_execution_started", execution_data)
         print(f"DEBUG: user_action signal emitted")
 
-    def _on_analysis_confirmed(self, analysis_data: ParamapAnalysis) -> None:
+    def _on_analysis_confirmed(self, analysis_data: CurvesAnalysis) -> None:
         """
         Handle analysis completion confirmation.
         
