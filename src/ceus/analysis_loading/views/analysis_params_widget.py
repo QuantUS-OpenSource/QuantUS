@@ -81,8 +81,10 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
     def _create_parameter_inputs(self) -> None:
         """Create input fields for each required parameter."""
         print(f"DEBUG: AnalysisParamsWidget._create_parameter_inputs called")
-        # This implementation is simplified compared to QUS for now
-        # Ideally would dynamically create inputs based on CEUS requirements
+        
+        # Clear existing inputs
+        self._clear_params_layout()
+        self._param_inputs = {}
         
         # If no params required, provide a small delay and auto-transition?
         # Or just show the screen with a "Continue" button
@@ -90,6 +92,50 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
             print(f"DEBUG: No required params found")
             if hasattr(self._ui, 'run_analysis_button'):
                  self._ui.run_analysis_button.setText("Continue to Execution")
+                 self._ui.run_analysis_button.setVisible(True)
+                 self._ui.run_analysis_button.setEnabled(True)
+            self._ui.analysis_running_label.hide()
+            self._ui.analysis_execution_label.hide()
+            return
+
+        # Show normal parameter labels
+        self._ui.analysis_params_label.show()
+        self._ui.run_analysis_button.setText("Run Analysis")
+        self._ui.run_analysis_button.setVisible(True)
+        self._ui.run_analysis_button.setEnabled(True)
+        self._ui.analysis_running_label.hide()
+        self._ui.analysis_execution_label.hide()
+
+        # Ideally would dynamically create inputs based on CEUS requirements
+        form_layout = QFormLayout()
+        for param_name in self._required_params:
+            label = QLabel(param_name.replace("_", " ").title() + ":")
+            label.setStyleSheet("color: white; font-size: 14px;")
+            
+            # Simple line edit for now
+            line_edit = QLineEdit()
+            line_edit.setStyleSheet("color: white; background-color: rgb(60, 60, 60); border: 1px solid gray; padding: 5px;")
+            
+            form_layout.addRow(label, line_edit)
+            self._param_inputs[param_name] = line_edit
+            
+        self._ui.params_layout.addLayout(form_layout)
+        
+    def _clear_params_layout(self) -> None:
+        """Clear all widgets from the params container."""
+        if hasattr(self._ui, 'params_layout') and self._ui.params_layout is not None:
+            while self._ui.params_layout.count():
+                child = self._ui.params_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+                elif child.layout():
+                    # Recursively clear sub-layouts
+                    def clear_sub_layout(l):
+                        while l.count():
+                            c = l.takeAt(0)
+                            if c.widget(): c.widget().deleteLater()
+                            elif c.layout(): clear_sub_layout(c.layout())
+                    clear_sub_layout(child.layout())
         
     def _on_run_analysis_clicked(self) -> None:
         """Handle run analysis button click."""
