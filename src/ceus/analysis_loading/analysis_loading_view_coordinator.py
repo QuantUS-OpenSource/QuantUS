@@ -160,13 +160,19 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
             print(f"DEBUG: Creating AnalysisParamsWidget with image_data = {self._image_data is not None}")
             if self._image_data is not None:
                 print(f"DEBUG: Passing scan_name = {self._image_data.scan_name}")
-                print(f"DEBUG: Passing phantom_name = {self._image_data.phantom_name}")
+                if hasattr(self._image_data, 'phantom_name'):
+                    print(f"DEBUG: Passing phantom_name = {self._image_data.phantom_name}")
             self._params_widget = AnalysisParamsWidget(self._image_data, self._seg_data, self._config_data)
             self._params_widget.setup_ui()
             self._params_widget.connect_signals()
             self._params_widget.params_configured.connect(self._on_params_configured)
             self._params_widget.back_requested.connect(self._on_params_back)
             self.addWidget(self._params_widget)
+        else:
+            # Update data in existing widget
+            self._params_widget._image_data = self._image_data
+            self._params_widget._seg_data = self._seg_data
+            self._params_widget._config_data = self._config_data
         
         print(f"DEBUG: Calling set_required_params...")
         self._params_widget.set_required_params(required_params, selected_functions)
@@ -198,6 +204,10 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
             print(f"DEBUG: AnalysisExecutionWidget created and added to stack")
         else:
             print(f"DEBUG: Using existing AnalysisExecutionWidget")
+            # Update data in existing widget
+            self._execution_widget._image_data = self._image_data
+            self._execution_widget._seg_data = self._seg_data
+            self._execution_widget._config_data = self._config_data
         
         print(f"DEBUG: Setting execution summary...")
         self._execution_widget.set_execution_summary(execution_summary)

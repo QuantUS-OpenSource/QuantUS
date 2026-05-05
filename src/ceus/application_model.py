@@ -124,9 +124,9 @@ class AnalysisWorker(QThread):
             )
             
             # Execute analysis
-            # Note: For CEUS, execution might happen during init or via a specific method
-            # In time_series_analysis/curves/framework.py, init does some setup but maybe not full execution
-            if hasattr(analysis_obj, 'run'):
+            if hasattr(analysis_obj, 'compute_curves'):
+                analysis_obj.compute_curves()
+            elif hasattr(analysis_obj, 'run'):
                 analysis_obj.run()
             
             self.finished.emit(analysis_obj)
@@ -680,6 +680,24 @@ class ApplicationModel(BaseModel):
             return self._analysis_functions[analysis_type]
         
         return self._analysis_functions
+
+    def get_required_params(self, analysis_type: str, selected_functions: list) -> list:
+        """
+        Get required parameters for the selected analysis.
+        
+        Args:
+            analysis_type: Key for the analysis type
+            selected_functions: List of selected function names
+            
+        Returns:
+            list: List of parameter names required
+        """
+        try:
+            from engines.ceus.src.time_series_analysis.options import get_required_kwargs
+            return get_required_kwargs(analysis_type, selected_functions)
+        except Exception as e:
+            print(f"Error getting required params: {e}")
+            return []
 
     def set_analysis_data(self, analysis_data: CurvesAnalysis) -> None:
         """

@@ -69,8 +69,9 @@ class AnalysisLoadingController(BaseController):
         
         # Automatically select the best available analysis type
         # Prefer curves_paramap, then curves, or just the first available one
+        # For CEUS, 'curves' is the standard non-parametric analysis.
         selected_type = None
-        for preferred in ["curves_paramap", "curves", "paramap"]:
+        for preferred in ["curves", "curves_paramap", "paramap"]:
             if preferred in analysis_types:
                 selected_type = preferred
                 break

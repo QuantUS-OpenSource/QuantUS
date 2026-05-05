@@ -234,6 +234,12 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
         self._ui.progress_bar.setValue(100)
         self._ui.progress_label.setText("Analysis completed successfully!")
         
+        # Add a message that the rest of the pipeline needs to be finished
+        info_label = QLabel("Note: The rest of the pipeline still needs to be finished.")
+        info_label.setStyleSheet("color: #FFD700; font-style: italic; font-size: 10px; margin-top: 5px;")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._ui.analysis_execution_layout.addWidget(info_label)
+        
         # Show finish button, hide execute button
         self._ui.execute_button.setVisible(False)
         self._ui.finish_button.setVisible(True)
