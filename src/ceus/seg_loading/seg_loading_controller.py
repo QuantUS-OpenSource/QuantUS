@@ -31,7 +31,7 @@ class SegmentationLoadingController(BaseController):
             image_data = model.image_data
             if not image_data:
                 raise ValueError("No image loaded in ApplicationModel")
-            view = SegLoadingViewCoordinator(image_data)
+            view = SegLoadingViewCoordinator(image_data, bmode_image_data=model.bmode_image_data)
             
         super().__init__(model, view)
         
@@ -66,6 +66,10 @@ class SegmentationLoadingController(BaseController):
             self._handle_segmentation_loading(action_data)
         elif action_name == 'apply_preprocs_preview':
             self._handle_preprocs_preview(action_data)
+        elif action_name == 'compute_noise_floor':
+            self._handle_compute_noise_floor(action_data)
+        elif action_name == 'enhance_image_request':
+            self._handle_enhance_image_request(action_data)
         elif action_name == 'segmentation_confirmed':
             pass # Handle confirmation action in the application controller
         else:
@@ -89,6 +93,26 @@ class SegmentationLoadingController(BaseController):
 
         self.view.preview_modified_image(image_data, frame_ix)
         
+    def _handle_compute_noise_floor(self, data: dict) -> None:
+        """Handle noise floor computation request."""
+        value = self.model.compute_ceus_noise_floor(
+            data['image_data'],
+            data['n_ref_frames'],
+            data['noise_std_multiplier']
+        )
+        self.view.set_noise_floor(value)
+
+    def _handle_enhance_image_request(self, data: dict) -> None:
+        """Handle image enhancement request."""
+        enhanced = self.model.enhance_image(
+            data['image_data'],
+            data['func_configs']
+        )
+        # The enhanced image is returned; the view caller should handle usage
+        # This is primarily for the export worker which calls it synchronously
+        # through the coordinator's routed action.
+        data['callback'](enhanced)
+
     def _handle_seg_type_selection(self, seg_type_name: str) -> None:
         """
         Handle segmentation type selection.
