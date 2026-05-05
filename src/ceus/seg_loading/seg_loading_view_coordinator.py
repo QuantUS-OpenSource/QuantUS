@@ -185,12 +185,36 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._voi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._voi_drawing_widget.close_requested.connect(self.close_requested.emit)
         self._voi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
+        self._voi_drawing_widget.compute_noise_floor_requested.connect(self._on_noise_floor_requested)
+        self._voi_drawing_widget.enhance_image_requested.connect(self._on_enhance_image_requested)
 
         # Add to stack and show
         self.addWidget(self._voi_drawing_widget)
         self.setCurrentWidget(self._voi_drawing_widget)
 
+    def set_noise_floor(self, value: float) -> None:
+        """Route computed noise floor to the VOI drawing widget."""
+        if self._voi_drawing_widget:
+            self._voi_drawing_widget.set_noise_floor(value)
+
+    def _on_noise_floor_requested(self, image_data, n_ref, std_mult) -> None:
+        """Emit signal to controller to compute noise floor."""
+        self._emit_user_action('compute_noise_floor', {
+            'image_data': image_data,
+            'n_ref_frames': n_ref,
+            'noise_std_multiplier': std_mult
+        })
+
+    def _on_enhance_image_requested(self, image_data, func_configs, callback=None) -> None:
+        """Emit signal to controller to enhance an image (used by export)."""
+        self._emit_user_action('enhance_image_request', {
+            'image_data': image_data,
+            'func_configs': func_configs,
+            'callback': callback
+        })
+
     def preview_modified_image(self, modified_image: UltrasoundImage, frame: int) -> None:
+
         """Show the preprocessed data in the VOI drawing widget."""
         if self._voi_drawing_widget:
             self._voi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)

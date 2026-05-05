@@ -351,6 +351,31 @@ class ApplicationModel(BaseModel):
             print(f"DEBUG: enhance_image error: {e}")
             return image
 
+    def compute_ceus_noise_floor(self, image_data: UltrasoundImage, n_ref_frames: int, noise_std_multiplier: float) -> float:
+        """
+        Compute the noise floor from pre-contrast frames.
+        
+        Args:
+            image_data: UltrasoundImage object
+            n_ref_frames: Number of reference frames
+            noise_std_multiplier: Multiplier for standard deviation
+            
+        Returns:
+            float: The computed noise floor
+        """
+        try:
+            funcs = self.get_preprocessing_options()
+            if 'compute_ceus_noise_floor' in funcs:
+                return funcs['compute_ceus_noise_floor'](
+                    image_data, 
+                    n_ref_frames=n_ref_frames, 
+                    noise_std_multiplier=noise_std_multiplier
+                )
+            return 0.0
+        except Exception as e:
+            print(f"WARNING: compute_ceus_noise_floor failed in model: {e}")
+            return 0.0
+
     def _validate_image_input(self, input_data: Dict[str, Any]) -> bool:
         """
         Validate input data for scan loading.

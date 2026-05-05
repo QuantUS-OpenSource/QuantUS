@@ -149,7 +149,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     file_selected = pyqtSignal(dict)  # {'seg_path': str, 'seg_type': str}
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
+    # B-mode/CEUS Toggle & Paramap Signals
     apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
+    compute_noise_floor_requested = pyqtSignal(object, int, float)  # image_data, n_ref, std_mult
+    enhance_image_requested = pyqtSignal(object, list)  # image_data, func_configs
 
     def __init__(self, image_data: UltrasoundImage, bmode_image_data: Optional[UltrasoundImage] = None, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
@@ -173,6 +176,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._n_ref_frames = 5
         self._noise_std_multiplier = 0.5
         self._ceus_p_high_percentile = 100
+        self._last_noise_floor = 0.0
         
         self._width_scale_axial = 1.0
         self._width_scale_sagittal = 1.0
@@ -242,18 +246,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     #     self._refresh_frames()
     
     def _compute_noise_floor(self, image_data: UltrasoundImage) -> float:
-        """Compute and cache the CEUS noise floor scalar from pre-contrast frames."""
-        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
-        try:
-            funcs = get_im_preproc_funcs()
-            return funcs['compute_ceus_noise_floor'](
-                image_data,
-                n_ref_frames=self._n_ref_frames,
-                noise_std_multiplier=self._noise_std_multiplier,
-            )
-        except Exception as e:
-            print(f"WARNING: compute_ceus_noise_floor failed, defaulting to 0.0: {e}")
-            return 0.0
+        """Request the CEUS noise floor scalar from the model."""
+        self._last_noise_floor = 0.0
+        self.compute_noise_floor_requested.emit(
+            image_data, 
+            self._n_ref_frames, 
+            self._noise_std_multiplier
+        )
+        return self._last_noise_floor
+
+    def set_noise_floor(self, value: float) -> None:
+        """Callback from controller to set the computed noise floor."""
+        self._last_noise_floor = value
         
     # ======================= Matplotlib Mouse Interaction ===================
     def _connect_matplotlib_events(self):
@@ -1168,7 +1172,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     def _export_video(self, progress_signal=None) -> None:
         """Export postprocessed CEUS and B-mode with VOI border overlay as a 2x3 MP4."""
         import cv2
-        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
 
         out_folder = self._ui.save_folder_input.text()
         out_name = Path(self._ui.save_name_input.text() or self._image_data.scan_name or "export").stem
@@ -1176,7 +1179,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             raise ValueError("Please select a valid output folder first.")
 
         out_path = str(Path(out_folder) / f"{out_name}_ceus.mp4")
-        funcs = get_im_preproc_funcs()
 
         cx, cy, cz = self._crosshair_xyzt[0], self._crosshair_xyzt[1], self._crosshair_xyzt[2]
 
@@ -1188,10 +1190,20 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             temp_im.pixel_data = raw_3d.T[None].T.copy()
             temp_im.pixdim = self._image_data.pixdim
             temp_im.frame_rate = self._image_data.frame_rate
-            temp_im = funcs['enhance_ceus_noise_norm'](
-                temp_im, p_low=self._ceus_p_low, p_high_percentile=self._ceus_p_high_percentile
-            )
-            return temp_im.pixel_data[:, :, :, 0]
+            
+            # Use controller to enhance via signals
+            self._temp_enhanced = None
+            self.enhance_image_requested.emit(temp_im, [
+                {'name': 'enhance_ceus_noise_norm', 'kwargs': {
+                    'p_low': self._ceus_p_low, 
+                    'p_high_percentile': self._ceus_p_high_percentile
+                }}
+            ], lambda img: setattr(self, '_temp_enhanced', img))
+            
+            # Wait for callback (this is synchronous because the action handler calls callback immediately)
+            if self._temp_enhanced:
+                return self._temp_enhanced.pixel_data[:, :, :, 0]
+            return raw_3d
 
         def _enhance_bmode_frame_3d(raw_3d: np.ndarray) -> np.ndarray:
             """Enhance a raw B-mode 3D frame, returns H x W x Z uint8."""
@@ -1199,12 +1211,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             temp_im.pixel_data = raw_3d.T[None].T.copy()
             temp_im.pixdim = self._image_data.pixdim
             temp_im.frame_rate = self._image_data.frame_rate
-            temp_im = funcs['enhance_bmode_noise'](
-                temp_im,
-                p_low_percentile=self._p_low_percentile,
-                p_high_percentile=self._p_high_percentile,
-            )
-            return temp_im.pixel_data[:, :, :, 0]
+            
+            self._temp_enhanced = None
+            self.enhance_image_requested.emit(temp_im, [
+                {'name': 'enhance_bmode_noise', 'kwargs': {
+                    'p_low_percentile': self._p_low_percentile,
+                    'p_high_percentile': self._p_high_percentile,
+                }}
+            ], lambda img: setattr(self, '_temp_enhanced', img))
+            
+            if self._temp_enhanced:
+                return self._temp_enhanced.pixel_data[:, :, :, 0]
+            return raw_3d
 
         def _voi_border_2d(mask_2d: np.ndarray) -> np.ndarray:
             binary = (mask_2d > 0).astype(np.uint8) * 255
