@@ -12,8 +12,11 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from .mvc.base_model import BaseModel
 from engines.ceus.src.image_loading.options import get_scan_loaders
 from engines.ceus.src.seg_loading.options import get_seg_loaders
+from engines.ceus.src.time_series_analysis.options import get_analysis_types
 from engines.ceus.src.entrypoints import scan_loading_step, seg_loading_step
-from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
+from engines.ceus.src.data_objs.image import UltrasoundImage
+from engines.ceus.src.data_objs.seg import CeusSeg
+from engines.ceus.src.time_series_analysis.curves.framework import CurvesAnalysis
 
 
 class ScanLoadingWorker(QThread):
@@ -35,6 +38,11 @@ class ScanLoadingWorker(QThread):
                 self.image_path,  
                 **self.scan_loader_kwargs
             )
+
+            if isinstance(image_data, int):
+                self.error_msg.emit(f"Error loading scan: Loader error code {image_data}")
+                return
+
             self.finished.emit(image_data)
             
         except Exception as e:
@@ -66,6 +74,10 @@ class SegLoadingWorker(QThread):
                 **self.seg_loader_kwargs
             )
             
+            if isinstance(seg_data, int):
+                self.error_msg.emit(f"Error loading segmentation: Loader error code {seg_data}")
+                return
+
             self.finished.emit(seg_data)
             
         except Exception as e:
@@ -73,6 +85,56 @@ class SegLoadingWorker(QThread):
             import traceback
             traceback.print_exc()
             self.error_msg.emit(f"Error loading segmentation: {e}")
+
+
+class AnalysisWorker(QThread):
+    """Worker thread for time-consuming analysis operations."""
+    finished = pyqtSignal(object)
+    error_msg = pyqtSignal(str)
+
+    def __init__(self, analysis_type: str, image_data: UltrasoundImage, 
+                 config_data: Any, seg_data: CeusSeg, 
+                 selected_functions: List[str], analysis_kwargs: Dict[str, Any]):
+        super().__init__()
+        self.analysis_type = analysis_type
+        self.image_data = image_data
+        self.config_data = config_data
+        self.seg_data = seg_data
+        self.selected_functions = selected_functions
+        self.analysis_kwargs = analysis_kwargs
+
+    def run(self):
+        """Execute the analysis in background thread."""
+        try:
+            from engines.ceus.src.time_series_analysis.options import get_analysis_types
+            all_types, _ = get_analysis_types()
+            
+            if self.analysis_type not in all_types:
+                self.error_msg.emit(f"Invalid analysis type: {self.analysis_type}")
+                return
+                
+            analysis_cls = all_types[self.analysis_type]
+            
+            # Initialize analysis
+            analysis_obj = analysis_cls(
+                self.image_data, 
+                self.seg_data, 
+                self.selected_functions, 
+                **self.analysis_kwargs
+            )
+            
+            # Execute analysis
+            if hasattr(analysis_obj, 'compute_curves'):
+                analysis_obj.compute_curves()
+            elif hasattr(analysis_obj, 'run'):
+                analysis_obj.run()
+            
+            self.finished.emit(analysis_obj)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.error_msg.emit(f"Error during analysis: {e}")
 
 
 class ApplicationModel(BaseModel):
@@ -89,6 +151,7 @@ class ApplicationModel(BaseModel):
     # Additional signals for application-specific events
     image_loaded = pyqtSignal(UltrasoundImage)
     segmentation_loaded = pyqtSignal(CeusSeg)
+    analysis_completed = pyqtSignal(object)  # Emits CurvesAnalysis
 
     def __init__(self):
         super().__init__()
@@ -105,9 +168,17 @@ class ApplicationModel(BaseModel):
         self._seg_data: Optional[CeusSeg] = None
         self._seg_worker: Optional[SegLoadingWorker] = None
         
+        # Analysis state
+        self._analysis_data: Optional[CurvesAnalysis] = None
+        self._analysis_types: Dict[str, Any] = {}
+        self._analysis_functions: Dict[str, Any] = {}
+        self._selected_analysis_type: Optional[str] = None
+        self._analysis_worker: Optional[AnalysisWorker] = None
+        
         # Initialize loaders
         self._load_scan_loaders()
         self._load_seg_loaders()
+        self._load_analysis_types()
     
     def _load_scan_loaders(self) -> None:
         """Load available scan loaders from backend."""
@@ -122,6 +193,15 @@ class ApplicationModel(BaseModel):
             self._seg_loaders = get_seg_loaders()
         except Exception as e:
             self._emit_error(f"Failed to load seg loaders: {e}")
+
+    def _load_analysis_types(self) -> None:
+        """Load available analysis types from backend."""
+        try:
+            self._analysis_types, self._analysis_functions = get_analysis_types()
+        except Exception as e:
+            print(f"Error loading analysis types: {e}")
+            self._analysis_types = {}
+            self._analysis_functions = {}
     
     # Image Loading Properties and Methods
     @property
@@ -438,7 +518,7 @@ class ApplicationModel(BaseModel):
         """
         try:
             if seg_type_display_name == "Manual Segmentation":
-                self._selected_seg_type = "pkl_roi"
+                self._selected_seg_type = "nifti"
                 return True
 
             # Convert display name back to internal key
@@ -541,6 +621,8 @@ class ApplicationModel(BaseModel):
                 print(f"-----------------------------------------------\n")
                 
             self.segmentation_loaded.emit(seg_data)
+            # Automatically confirm if this was loaded (either from file or manual save)
+            # This allows the app controller to catch the completion
         else:
             print(f"DEBUG: Segmentation loading failed - invalid seg data")
             self._emit_error("Failed to load segmentation data")
@@ -556,3 +638,101 @@ class ApplicationModel(BaseModel):
             self._seg_worker.quit()
             self._seg_worker.wait()
             self._seg_worker = None
+
+    # ============================================================================
+    # ANALYSIS METHODS
+    # ============================================================================
+    
+    def get_analysis_types(self) -> tuple:
+        """Get available analysis types and functions."""
+        return self._analysis_types, self._analysis_functions
+    
+    def set_analysis_type(self, analysis_type: str) -> bool:
+        """
+        Set the selected analysis type.
+        
+        Args:
+            analysis_type: Analysis type to select
+            
+        Returns:
+            bool: True if successful
+        """
+        if analysis_type in self._analysis_types:
+            self._selected_analysis_type = analysis_type
+            return True
+        else:
+            print(f"DEBUG: Invalid analysis type: {analysis_type}")
+            return False
+
+    def get_analysis_functions(self, analysis_type: str) -> dict:
+        """
+        Get available functions for an analysis type.
+        
+        Args:
+            analysis_type: Analysis type
+
+        Returns:
+            dict: Available functions for the analysis type
+        """
+        # In CEUS engine, analysis_functions is a flat dict of all available curve functions
+        # that are applicable to both 'curves' and 'curves_paramap' analysis types.
+        if analysis_type in self._analysis_functions and isinstance(self._analysis_functions[analysis_type], dict):
+            return self._analysis_functions[analysis_type]
+        
+        return self._analysis_functions
+
+    def get_required_params(self, analysis_type: str, selected_functions: list) -> list:
+        """
+        Get required parameters for the selected analysis.
+        
+        Args:
+            analysis_type: Key for the analysis type
+            selected_functions: List of selected function names
+            
+        Returns:
+            list: List of parameter names required
+        """
+        try:
+            from engines.ceus.src.time_series_analysis.options import get_required_kwargs
+            return get_required_kwargs(analysis_type, selected_functions)
+        except Exception as e:
+            print(f"Error getting required params: {e}")
+            return []
+
+    def set_analysis_data(self, analysis_data: CurvesAnalysis) -> None:
+        """
+        Store completed analysis data.
+        
+        Args:
+            analysis_data: Completed analysis data
+        """
+        self._analysis_data = analysis_data
+        # Signal that analysis is complete
+        self.analysis_completed.emit(analysis_data)
+
+    def run_analysis(self, analysis_type: str, image_data: UltrasoundImage, 
+                    config_data: Any, seg_data: CeusSeg, 
+                    selected_functions: List[str], **kwargs) -> None:
+        """
+        Run the analysis in a background thread.
+        """
+        # Stop existing worker if running
+        if self._analysis_worker and self._analysis_worker.isRunning():
+            self._analysis_worker.quit()
+            self._analysis_worker.wait()
+            
+        self._analysis_worker = AnalysisWorker(
+            analysis_type, image_data, config_data, seg_data, selected_functions, kwargs
+        )
+        
+        self._analysis_worker.finished.connect(self._on_analysis_worker_finished)
+        self._analysis_worker.error_msg.connect(self._emit_error)
+        
+        self._set_loading(True)
+        self._analysis_worker.start()
+        
+    def _on_analysis_worker_finished(self, analysis_obj: Any) -> None:
+        """Handle analysis completion."""
+        self._set_loading(False)
+        self._analysis_data = analysis_obj
+        self.analysis_completed.emit(analysis_obj)

@@ -128,7 +128,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     """
     
     # Signals for communicating with controller
-    file_selected = pyqtSignal(dict)  # {'seg_path': str, 'seg_type': str}
+    segmentation_saved = pyqtSignal(str)  # emit with saved file path
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
     apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
@@ -196,8 +196,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._connect_signals()
         self._connect_matplotlib_events()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._update_scan_display() # Initial UI update
-        self._refresh_frames()      # Mark all planes for first update
+        self._update_scan_display()  # Initial UI update
+        self._refresh_frames()       # Mark all planes for first update
 
     def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
         """Update the displayed image data, e.g. after preprocessing."""
@@ -1044,6 +1044,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.saving_voi_label.hide()
         self._show_widget_lists([self._save_voi_widgets])
         print(msg)
+        if hasattr(self, '_last_saved_path'):
+            self.segmentation_saved.emit(str(self._last_saved_path))
 
     def _on_save_voi_error(self, err):
         self._ui.saving_voi_label.hide()
@@ -1272,6 +1274,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         out_name = out_name + '.nii.gz' if not out_name.endswith('.nii.gz') else out_name
 
         out_path = Path(self._ui.save_folder_input.text()) / out_name
+        self._last_saved_path = out_path
 
         affine = np.eye(4)
         for i, res in enumerate(self._image_data.pixdim[:3]):

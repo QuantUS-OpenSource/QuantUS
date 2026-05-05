@@ -35,15 +35,15 @@ class SegmentationLoadingController(BaseController):
             
         super().__init__(model, view)
         
-        # # Connect to model signals for automatic view updates
-        # self._connect_model_signals()
+        # Connect to model signals for automatic view updates
+        self._connect_model_signals()
         
         # Initialize view with segmentation loaders
         self._initialize_view()
         
-    # def _connect_model_signals(self) -> None:
-    #     """Connect to model signals for automatic view updates."""
-    #     self.model.segmentation_loaded.connect(self.view.show_segmentation_preview)
+    def _connect_model_signals(self) -> None:
+        """Connect to model signals for automatic view updates."""
+        self.model.segmentation_loaded.connect(self.view.show_segmentation_preview)
         
     def _initialize_view(self) -> None:
         """Initialize the view with data from the model."""

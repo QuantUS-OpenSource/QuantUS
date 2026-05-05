@@ -181,6 +181,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._voi_drawing_widget = DrawVOIWidget(self._image_data)
 
         # Connect signals to handle user actions
+        self._voi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
         self._voi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._voi_drawing_widget.close_requested.connect(self.close_requested.emit)
         self._voi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
@@ -193,6 +194,8 @@ class SegLoadingViewCoordinator(QStackedWidget):
         """Show the preprocessed data in the VOI drawing widget."""
         if self._voi_drawing_widget:
             self._voi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)
+        elif self._roi_drawing_widget:
+            self._roi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)
         else:
             raise RuntimeError("VOI drawing widget not initialized")
 
@@ -201,16 +204,46 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._roi_drawing_widget = DrawROIWidget(self._image_data)
 
         # Connect signals to handle user actions
+        self._roi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
         self._roi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._roi_drawing_widget.close_requested.connect(self.close_requested.emit)
+        self._roi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
 
         # Add to stack and show
         self.addWidget(self._roi_drawing_widget)
         self.setCurrentWidget(self._roi_drawing_widget)
 
+    def show_segmentation_preview(self, seg_data: CeusSeg) -> None:
+        """
+        Show the segmentation preview widget.
+        
+        Args:
+            seg_data: Loaded segmentation data
+        """
+        self._seg_data = seg_data
+        
+        # For now, since CEUS specific preview widgets are not yet implemented,
+        # we automatically confirm the segmentation to allow the workflow to continue.
+        # This prevents the application from getting "stuck" after loading.
+        print(f"DEBUG: Segmentation loaded, automatically confirming (Preview not yet implemented for CEUS)")
+        self.user_action.emit('segmentation_confirmed', seg_data)
+
     # ============================================================================
     # USER ACTION HANDLING - Process user interactions and communicate with controller
     # ============================================================================
+
+    def _on_segmentation_saved(self, file_path: str) -> None:
+        """
+        Handle segmentation saved from the manual drawing widget.
+        
+        Args:
+            file_path: Path to the saved segmentation file
+        """
+        file_data = {
+            'seg_path': file_path,
+            'seg_type': self._selected_seg_type
+        }
+        self._emit_user_action('load_segmentation', file_data)
 
     def _on_seg_type_selected(self, seg_type_name: str) -> None:
         """
