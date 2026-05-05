@@ -413,8 +413,15 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             return
 
         try:
-            pix = self._image_data.pixdim
+            # Safely get pixdim or default to 1.0s
+            pix = getattr(self._image_data, 'pixdim', [1.0, 1.0, 1.0])
+            if pix is None or len(pix) < 2:
+                pix = [1.0, 1.0, 1.0]
             
+            # Pad with 1.0 if we have 2D data but need 3D for sagittal/coronal canvases
+            while len(pix) < 3:
+                pix.append(1.0)
+
             # Plane 0: Axial (XY) -> show (Y, X) -> Rows=Y, Cols=X -> dy / dx
             if self._ax_sag_cor_matplotlib_canvases[0]:
                 dx, dy = pix[0], pix[1]
@@ -440,6 +447,8 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             self._refresh_frames()
         except Exception as e:
             print(f"Error updating aspect ratios: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _on_philips_toggled(self, state: int) -> None:
         """Handle Philips CEUS pseudocolor toggle."""

@@ -71,20 +71,34 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
             required_params: List of required parameter names
             selected_functions: List of selected function names
         """
+        print(f"DEBUG: AnalysisParamsWidget.set_required_params called")
+        print(f"DEBUG: required_params = {required_params}")
+        print(f"DEBUG: selected_functions = {selected_functions}")
         self._required_params = required_params
         self._selected_functions = selected_functions
         self._create_parameter_inputs()
         
     def _create_parameter_inputs(self) -> None:
         """Create input fields for each required parameter."""
+        print(f"DEBUG: AnalysisParamsWidget._create_parameter_inputs called")
         # This implementation is simplified compared to QUS for now
         # Ideally would dynamically create inputs based on CEUS requirements
-        pass
-
+        
+        # If no params required, provide a small delay and auto-transition?
+        # Or just show the screen with a "Continue" button
+        if not self._required_params:
+            print(f"DEBUG: No required params found")
+            if hasattr(self._ui, 'run_analysis_button'):
+                 self._ui.run_analysis_button.setText("Continue to Execution")
+        
     def _on_run_analysis_clicked(self) -> None:
         """Handle run analysis button click."""
+        print(f"DEBUG: AnalysisParamsWidget._on_run_analysis_clicked called")
         # Collect parameters (simplified)
         params = {}
+        # TODO: Collect actual values from dynamically created widgets
+        
+        print(f"DEBUG: Emitting params_configured with {params}")
         self.params_configured.emit(params)
 
     def _on_back_clicked(self) -> None:
