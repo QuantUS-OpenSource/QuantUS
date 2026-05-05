@@ -15,6 +15,7 @@ from .views.seg_type_selection_widget import SegTypeSelectionWidget
 from .views.seg_file_selection_widget import SegFileSelectionWidget
 from .views.draw_roi_widget import DrawROIWidget
 from .views.draw_voi_widget import DrawVOIWidget
+from .views.seg_preview_widget import SegPreviewWidget
 from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
 
 
@@ -48,6 +49,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._seg_type_widget: Optional[SegTypeSelectionWidget] = None
         self._seg_file_widget: Optional[SegFileSelectionWidget] = None
         self._voi_drawing_widget: Optional[DrawVOIWidget] = None
+        self._seg_preview_widget: Optional[SegPreviewWidget] = None
         
         # Current state
         self._selected_seg_type: Optional[str] = None
@@ -109,6 +111,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         widgets_to_remove = [
             self._seg_file_widget, 
             self._voi_drawing_widget,
+            self._seg_preview_widget,
         ]
         
         for widget in widgets_to_remove:
@@ -182,6 +185,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
 
         # Connect signals to handle user actions
         self._voi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
+        self._voi_drawing_widget.segmentation_completed.connect(self.show_segmentation_preview)
         self._voi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._voi_drawing_widget.close_requested.connect(self.close_requested.emit)
         self._voi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
@@ -205,6 +209,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
 
         # Connect signals to handle user actions
         self._roi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
+        self._roi_drawing_widget.segmentation_completed.connect(self.show_segmentation_preview)
         self._roi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._roi_drawing_widget.close_requested.connect(self.close_requested.emit)
         self._roi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
@@ -220,13 +225,26 @@ class SegLoadingViewCoordinator(QStackedWidget):
         Args:
             seg_data: Loaded segmentation data
         """
+        # Avoid redundant preview if already showing this data
+        if self._seg_preview_widget and self._seg_data is seg_data:
+            self.setCurrentWidget(self._seg_preview_widget)
+            return
+
         self._seg_data = seg_data
         
-        # For now, since CEUS specific preview widgets are not yet implemented,
-        # we automatically confirm the segmentation to allow the workflow to continue.
-        # This prevents the application from getting "stuck" after loading.
-        print(f"DEBUG: Segmentation loaded, automatically confirming (Preview not yet implemented for CEUS)")
-        self.user_action.emit('segmentation_confirmed', seg_data)
+        # Create and setup segmentation preview widget
+        self._seg_preview_widget = SegPreviewWidget(self._image_data, seg_data)
+        
+        # Connect signals to handle user actions
+        self._seg_preview_widget.segmentation_confirmed.connect(
+            lambda: self.user_action.emit('segmentation_confirmed', seg_data)
+        )
+        self._seg_preview_widget.back_requested.connect(self.reset_to_seg_type_selection)
+        self._seg_preview_widget.close_requested.connect(self.close_requested.emit)
+
+        # Add to stack and show
+        self.addWidget(self._seg_preview_widget)
+        self.setCurrentWidget(self._seg_preview_widget)
 
     # ============================================================================
     # USER ACTION HANDLING - Process user interactions and communicate with controller
