@@ -317,5 +317,13 @@ class AnalysisLoadingController(BaseController):
         return self._analysis_data
         
     def cleanup(self) -> None:
-        """Clean up resources."""
-        self.model.cleanup()
+        """Clean up resources and disconnect signals."""
+        try:
+            self._model.analysis_completed.disconnect(self._on_analysis_completed)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            self._model.error_occurred.disconnect(self._on_analysis_error)
+        except (TypeError, RuntimeError):
+            pass
+        self._model.cleanup()

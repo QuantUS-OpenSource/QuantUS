@@ -664,6 +664,11 @@ class ApplicationModel(BaseModel):
             self._seg_worker.wait()
             self._seg_worker = None
 
+        if hasattr(self, '_analysis_worker') and self._analysis_worker and self._analysis_worker.isRunning():
+            self._analysis_worker.quit()
+            self._analysis_worker.wait()
+            self._analysis_worker = None
+
     # ============================================================================
     # ANALYSIS METHODS
     # ============================================================================

@@ -118,7 +118,9 @@ class ApplicationController(QObject):
             error_message: Error message from model
         """
         print(f"DEBUG: Application model error: {error_message}")
-        # The individual view controllers will handle displaying the error to the user
+        # Show error message to user
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.critical(self._widget_stack, "Error", error_message)
         
     def _on_image_action(self, action_name: str, action_data) -> None:
         """

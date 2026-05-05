@@ -135,5 +135,9 @@ class SegmentationLoadingController(BaseController):
         return self.model.seg_data
         
     def cleanup(self) -> None:
-        """Clean up resources."""
+        """Clean up resources and disconnect signals."""
+        try:
+            self.model.segmentation_loaded.disconnect(self.view.show_segmentation_preview)
+        except (TypeError, RuntimeError):
+            pass
         self.model.cleanup()
