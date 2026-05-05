@@ -129,6 +129,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     
     # Signals for communicating with controller
     segmentation_saved = pyqtSignal(str)  # emit with saved file path
+    segmentation_completed = pyqtSignal(object)  # CeusSeg object
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
     apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
