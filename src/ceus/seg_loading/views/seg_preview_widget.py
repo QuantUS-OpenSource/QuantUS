@@ -86,6 +86,17 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             # If the mask was saved from DrawVOIWidget, it should match the pixel_data shape
             if mask.shape == (self._x_len, self._y_len, self._z_len):
                 self._seg_mask_indices = np.where(mask > 0)
+            elif mask.ndim == 2 and (mask.shape == (self._y_len, self._z_len) or mask.shape == (self._x_len, self._y_len)):
+                # Handle 2D mask for 2D+time sequence (broadcasting across Time)
+                # If image is (759, 1472, 1962), x=759 (Time), y=1472 (H), z=1962 (W)
+                # Mask is (1472, 1962), which matches (y, z)
+                if mask.shape == (self._y_len, self._z_len):
+                    temp_mask = np.repeat(mask[np.newaxis, :, :], self._x_len, axis=0)
+                    self._seg_mask_indices = np.where(temp_mask > 0)
+                else:
+                    # Original logic for (x, y) spatial dimensions
+                    temp_mask = np.repeat(mask[:, :, np.newaxis], self._z_len, axis=2)
+                    self._seg_mask_indices = np.where(temp_mask > 0)
             elif mask.shape == (self._y_len, self._x_len, self._z_len):
                 # Handle common XY transpose if detected
                 self._seg_mask_indices = np.where(mask.transpose(1, 0, 2) > 0)
