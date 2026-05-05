@@ -693,7 +693,6 @@ class ApplicationModel(BaseModel):
         
         return self._analysis_functions
 
-<<<<<<< HEAD
     def get_required_params(self, analysis_type: str, selected_functions: list) -> list:
         """
         Get required parameters for the selected analysis.
@@ -712,8 +711,6 @@ class ApplicationModel(BaseModel):
             print(f"Error getting required params: {e}")
             return []
 
-=======
->>>>>>> 29-ceus-bug-report-gui-cannot-load-saved-nifti-voi
     def set_analysis_data(self, analysis_data: CurvesAnalysis) -> None:
         """
         Store completed analysis data.
