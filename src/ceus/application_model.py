@@ -416,6 +416,19 @@ class ApplicationModel(BaseModel):
             print(f"DEBUG: enhance_image error: {e}")
             return image
 
+    def apply_preprocessing_preview(self, func_configs: List[Dict[str, Any]], image: UltrasoundImage) -> UltrasoundImage:
+        """
+        Alias for enhance_image to support legacy controller calls.
+        
+        Args:
+            func_configs: List of dicts with 'name' and 'kwargs'
+            image: UltrasoundImage object to enhance
+            
+        Returns:
+            UltrasoundImage: Enhanced image
+        """
+        return self.enhance_image(image, func_configs)
+
     def _validate_image_input(self, input_data: Dict[str, Any]) -> bool:
         """
         Validate input data for scan loading.
