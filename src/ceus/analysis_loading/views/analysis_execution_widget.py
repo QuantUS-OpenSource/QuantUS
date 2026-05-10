@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QFont
 
-from quantus.gui.mvc.base_view import BaseViewMixin
-from quantus.gui.analysis_loading.ui.analysis_execution_ui import Ui_analysisExecution
-from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
-from quantus.analysis.paramap.framework import ParamapAnalysis
+from ...mvc.base_view import BaseViewMixin
+from ..ui.analysis_execution_ui import Ui_analysisExecution
+from engines.ceus.src.data_objs.image import UltrasoundImage
+from engines.ceus.src.data_objs.seg import CeusSeg
+from engines.ceus.src.time_series_analysis.curves.framework import CurvesAnalysis
 
 
 class AnalysisExecutionWidget(QWidget, BaseViewMixin):
@@ -26,11 +27,11 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
     
     # Signals for communicating with controller
     execution_started = pyqtSignal(dict)  # execution_data
-    analysis_confirmed = pyqtSignal(object)  # analysis_data (ParamapAnalysis)
+    analysis_confirmed = pyqtSignal(object)  # analysis_data (CurvesAnalysis)
     close_requested = pyqtSignal()
     back_requested = pyqtSignal()
     
-    def __init__(self, image_data: UltrasoundRfImage, seg_data: BmodeSeg, config_data: RfAnalysisConfig, parent: Optional[QWidget] = None):
+    def __init__(self, image_data: UltrasoundImage, seg_data: CeusSeg, config_data, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
         self._ui = Ui_analysisExecution()
@@ -40,7 +41,7 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
         
         # Current state
         self._execution_summary: Dict = {}
-        self._analysis_data: Optional[ParamapAnalysis] = None
+        self._analysis_data: Optional[CurvesAnalysis] = None
         self._is_executing = False
         self._results_shown = False  # Track if results have been shown
         
@@ -78,8 +79,8 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
 
         # Update labels to reflect inputted image and phantom
         if self._image_data is not None:
-            self._ui.image_path_input.setText(self._image_data.scan_name or "No image loaded")
-            self._ui.phantom_path_input.setText(self._image_data.phantom_name or "No phantom loaded")
+            self._ui.image_path_input.setText(getattr(self._image_data, 'scan_name', "No image loaded"))
+            self._ui.phantom_path_input.setText(getattr(self._image_data, 'phantom_name', "No phantom loaded"))
         else:
             self._ui.image_path_input.setText("No image loaded")
             self._ui.phantom_path_input.setText("No phantom loaded")
@@ -219,7 +220,7 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
                 if child.widget():
                     child.widget().deleteLater()
                 
-    def show_results(self, analysis_data: ParamapAnalysis) -> None:
+    def show_results(self, analysis_data: CurvesAnalysis) -> None:
         """
         Show analysis results.
         
@@ -232,6 +233,12 @@ class AnalysisExecutionWidget(QWidget, BaseViewMixin):
         # Update progress
         self._ui.progress_bar.setValue(100)
         self._ui.progress_label.setText("Analysis completed successfully!")
+        
+        # Add a message that the rest of the pipeline needs to be finished
+        info_label = QLabel("Note: The rest of the pipeline still needs to be finished.")
+        info_label.setStyleSheet("color: #FFD700; font-style: italic; font-size: 10px; margin-top: 5px;")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._ui.analysis_execution_layout.addWidget(info_label)
         
         # Show finish button, hide execute button
         self._ui.execute_button.setVisible(False)

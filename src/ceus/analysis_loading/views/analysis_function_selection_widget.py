@@ -9,9 +9,10 @@ from typing import List, Optional, Dict
 from PyQt6.QtWidgets import QWidget, QComboBox, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy
 from PyQt6.QtCore import pyqtSignal, Qt
 
-from quantus.gui.mvc.base_view import BaseViewMixin
-from quantus.gui.analysis_loading.ui.analysis_function_selection_ui import Ui_analysisFunctionSelection
-from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from ...mvc.base_view import BaseViewMixin
+from ..ui.analysis_function_selection_ui import Ui_analysisFunctionSelection
+from engines.ceus.src.data_objs.image import UltrasoundImage
+from engines.ceus.src.data_objs.seg import CeusSeg
 
 
 class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
@@ -27,7 +28,7 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
     close_requested = pyqtSignal()
     back_requested = pyqtSignal()
     
-    def __init__(self, image_data: UltrasoundRfImage, seg_data: BmodeSeg, config_data: RfAnalysisConfig, parent: Optional[QWidget] = None):
+    def __init__(self, image_data: UltrasoundImage, seg_data: CeusSeg, config_data, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
         self._ui = Ui_analysisFunctionSelection()
@@ -56,8 +57,8 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
 
         # Update labels to reflect inputted image and phantom
         if self._image_data is not None:
-            self._ui.image_path_input.setText(self._image_data.scan_name or "No image loaded")
-            self._ui.phantom_path_input.setText(self._image_data.phantom_name or "No phantom loaded")
+            self._ui.image_path_input.setText(getattr(self._image_data, 'scan_name', "No image loaded"))
+            self._ui.phantom_path_input.setText(getattr(self._image_data, 'phantom_name', "No phantom loaded"))
         else:
             self._ui.image_path_input.setText("No image loaded")
             self._ui.phantom_path_input.setText("No phantom loaded")

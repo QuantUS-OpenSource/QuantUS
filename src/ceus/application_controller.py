@@ -5,14 +5,16 @@ Main Application Controller for QuantUS GUI MVC architecture
 import sys
 import qdarktheme
 from typing import Optional
-from PyQt6.QtWidgets import QApplication, QStackedWidget
+from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QStackedWidget
 
 from .application_model import ApplicationModel
-from .image_loading.image_loading_view_coordinator import ImageLoadingViewCoordinator
 from .image_loading.image_loading_controller import ImageLoadingController
 from .seg_loading.seg_loading_controller import SegmentationLoadingController
-from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
+from .analysis_loading.analysis_loading_controller import AnalysisLoadingController
+from engines.ceus.src.data_objs.image import UltrasoundImage
+from engines.ceus.src.data_objs.seg import CeusSeg
 
 
 class ApplicationController(QObject):
@@ -37,9 +39,14 @@ class ApplicationController(QObject):
         # Unified application model
         self._model = ApplicationModel()
         
+        # Current data
+        self._image_data: Optional[UltrasoundImage] = None
+        self._seg_data: Optional[CeusSeg] = None
+        
         # Controllers for different screens (using the same model)
         self._image_loading_controller: Optional[ImageLoadingController] = None
         self._segmentation_controller: Optional[SegmentationLoadingController] = None
+        self._analysis_loading_controller: Optional[AnalysisLoadingController] = None
         
         # Setup main widget
         self._setup_main_widget()
@@ -59,7 +66,7 @@ class ApplicationController(QObject):
         """Connect unified model signals to application controller."""
         self._model.image_loaded.connect(self._initialize_segmentation_loading)
         self._model.error_occurred.connect(self._on_model_error)
-        
+
     def _initialize_image_loading(self) -> None:
         """Initialize the image loading screen."""
         if self._image_loading_controller:
@@ -82,6 +89,8 @@ class ApplicationController(QObject):
         Args:
             image_data: Loaded image data from previous screen
         """
+        self._image_data = image_data
+        
         if self._segmentation_controller:
             self._cleanup_segmentation_loading()
         
@@ -104,7 +113,8 @@ class ApplicationController(QObject):
             error_message: Error message from model
         """
         print(f"DEBUG: Application model error: {error_message}")
-        # The individual view controllers will handle displaying the error to the user
+        # Show error message to user
+        QMessageBox.critical(self._widget_stack, "Error", error_message)
         
     def _on_image_action(self, action_name: str, action_data) -> None:
         """
@@ -128,10 +138,58 @@ class ApplicationController(QObject):
         """
         if action_name == 'segmentation_confirmed':
             self._seg_data = self._segmentation_controller.get_loaded_segmentation()
-            # TODO: Navigate to analysis screen when implemented
-            print("Analysis screen coming soon...")
-            self._app.quit()
+            
+            # Use model data as source of truth
+            image_data = self._model.image_data if self._model.image_data else self._image_data
+            
+            self._initialize_analysis_loading(image_data, self._seg_data)
                 
+    def _initialize_analysis_loading(self, image_data: UltrasoundImage, seg_data: CeusSeg) -> None:
+        """
+        Initialize the analysis loading screen.
+        
+        Args:
+            image_data: Loaded image data
+            seg_data: Loaded segmentation data
+        """
+        if self._analysis_loading_controller:
+            self._cleanup_analysis_loading()
+            
+        # Create controller with unified model
+        # Note: CEUS might need a config object, passing None for now if not available
+        self._analysis_loading_controller = AnalysisLoadingController(self._model, image_data, seg_data, None)
+        
+        # Connect signals
+        self._analysis_loading_controller.view.user_action.connect(self._on_analysis_action)
+        self._analysis_loading_controller.view.back_requested.connect(self._navigate_to_segmentation_loading)
+        
+        # Add to stack and show
+        self._widget_stack.addWidget(self._analysis_loading_controller.view)
+        self._widget_stack.setCurrentWidget(self._analysis_loading_controller.view)
+
+    def _on_analysis_action(self, action_name: str, action_data) -> None:
+        """
+        Handle actions from the analysis loading screen.
+        
+        Args:
+            action_name: Name of the action
+            action_data: Data associated with the action
+        """
+        if action_name == 'analysis_loading_completed':
+            print("Analysis completed successfully!")
+            # Future: Navigate to visualization screen
+            self._app.quit()
+
+    def _navigate_to_segmentation_loading(self) -> None:
+        """Navigate back to segmentation loading."""
+        if self._analysis_loading_controller:
+            self._cleanup_analysis_loading()
+            
+        if self._segmentation_controller:
+            self._widget_stack.setCurrentWidget(self._segmentation_controller.view)
+        else:
+            self._initialize_segmentation_loading(self._image_data)
+
     def _navigate_to_image_loading(self) -> None:
         """Navigate to image loading screen."""
         # Reset image loading controller to initial state
@@ -192,6 +250,15 @@ class ApplicationController(QObject):
         """Clean up all resources before application exit."""
         self._cleanup_image_loading()
         self._cleanup_segmentation_loading()
+        self._cleanup_analysis_loading()
+
+    def _cleanup_analysis_loading(self) -> None:
+        """Clean up analysis loading controller resources."""
+        if self._analysis_loading_controller:
+            self._widget_stack.removeWidget(self._analysis_loading_controller.view)
+            self._analysis_loading_controller.cleanup()
+            self._analysis_loading_controller.view.deleteLater()
+            self._analysis_loading_controller = None
         
     @property
     def image_data(self) -> Optional[UltrasoundImage]:

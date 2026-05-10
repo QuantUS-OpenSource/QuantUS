@@ -128,7 +128,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     """
     
     # Signals for communicating with controller
-    file_selected = pyqtSignal(dict)  # {'seg_path': str, 'seg_type': str}
+    segmentation_saved = pyqtSignal(str)  # emit with saved file path
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
     apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
@@ -146,6 +146,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._width_scale_axial = 1.0
         self._width_scale_sagittal = 1.0
         self._width_scale_coronal = 1.0
+        self._mask_alpha = 125 # Default alpha for mask overlay (0-255)
         self._use_philips_ceus = False
         
         # Cache for enhanced volume
@@ -156,7 +157,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._drawing_widgets = []
         self._voi_decision_widgets = []
         self._save_voi_widgets = []
-        self._voi_alpha_widgets = []
 
         # Crosshair / navigation state
         self._crosshair_active = False
@@ -173,11 +173,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._current_drawing_plane = None
         self._drawn_rois: List[Tuple[int, List[float], np.ndarray]] = []  # (plane_index, [roi_coords_xyz], roi_mask)
         self._roi_masks_overlap = np.zeros((self._x_len, self._y_len, self._z_len, 4), dtype=np.uint8)
+        self._roi_masks_overlap_1d = np.zeros((self._x_len, self._y_len, self._z_len, 4), dtype=np.uint8)
 
         # Per-plane resources (axial, sagittal, coronal)
         self._ax_sag_cor_matplotlib_canvases = [None, None, None]
         self._ax_sag_cor_planes = (None, None, None)
-        self._ax_sag_cor_index_maps = ((0, 1), (2, 1), (2, 0))  # dims that vary per plane
+        self._ax_sag_cor_index_maps = ((0, 1), (2, 1), (0, 2))  # (horiz_dim, vert_dim)
         self._ax_sag_cor_animations = [None, None, None]
         self._ax_sag_cor_plane_artists = [None, None, None]
         self._ax_sag_cor_crosshair_lines = [(None, None), (None, None), (None, None)]
@@ -192,16 +193,17 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._setup_ui()
         self._setup_matplotlib_canvases()
         self._initialize_plane_displays()
+        self._update_aspect_ratios()
         self._setup_all_plane_animations()
         self._connect_signals()
         self._connect_matplotlib_events()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._update_scan_display() # Initial UI update
-        self._refresh_frames()      # Mark all planes for first update
+        self._update_scan_display()  # Initial UI update
+        self._refresh_frames()       # Mark all planes for first update
 
     def update_enhancement_cache(self, enhanced_frame: np.ndarray, frame: int) -> None:
         """Update the displayed image data, e.g. after preprocessing."""
-        assert enhanced_frame.shape[:-1] == self._pix_data.shape[:-1], "Enhanced pixel data must have the same shape as original"
+        assert enhanced_frame.shape[:-1] == self._pix_data.shape[:-1], f"Enhanced pixel data must have the same shape as original"
         self._enhanced_cache = enhanced_frame[:, :, :, 0]  # Store only the current time frame in cache
         self._enhanced_cache_frame = frame
         self._refresh_frames()
@@ -274,15 +276,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         params = {}
         if self._current_drawing_plane == None or self._current_drawing_plane == plane_ix+1:
             if self._crosshair_xyzt[dim_x] != new_xval:
-                if dim_x == 0: params['x'] = new_xval
-                elif dim_x == 1: params['y'] = new_xval
-                elif dim_x == 2: params['z'] = new_xval
-                elif dim_x == 3: params['t'] = new_xval
+                key = ['x', 'y', 'z', 't'][dim_x]
+                params[key] = new_xval
             if self._crosshair_xyzt[dim_y] != new_yval:
-                if dim_y == 0: params['x'] = new_yval
-                elif dim_y == 1: params['y'] = new_yval
-                elif dim_y == 2: params['z'] = new_yval
-                elif dim_y == 3: params['t'] = new_yval
+                key = ['x', 'y', 'z', 't'][dim_y]
+                params[key] = new_yval
 
             if params:
                 self.set_crosshair(**params)
@@ -324,13 +322,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._ui.clear_save_folder_button,
             self._ui.export_voi_button,
         ]
-        self._voi_alpha_widgets = [
-            self._ui.alpha_label,
-            self._ui.alpha_of_label,
-            self._ui.alpha_spin_box,
-            self._ui.alpha_status,
-            self._ui.alpha_total
-        ]
 
         self._ui.scan_name_input.setText(self._image_data.scan_name)
         self._ui.toggle_crosshair_visibility_button.setText('Hide Crosshair')
@@ -339,7 +330,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._ui.interp_loading_label.hide(); self._ui.saving_voi_label.hide()
         self._ui.navigating_label.hide(); self._ui.undo_last_roi_button.hide()
         self._hide_widget_lists([self._voi_decision_widgets, 
-                                 self._save_voi_widgets, self._voi_alpha_widgets])
+                                 self._save_voi_widgets])
                                  
         # Setup enhancement controls in sidebar
         self._setup_enhancement_controls()
@@ -412,9 +403,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         width_cor_col, self.width_cor_slider, self.width_cor_val_lbl = create_enh_column(
             "WIDTH (COR)", 1, 50, int(self._width_scale_coronal * 10), self._on_width_coronal_changed
         )
+        # Add VOI Alpha slider
+        alpha_col, self.alpha_slider, self.alpha_val_lbl = create_enh_column(
+            "VOI ALPHA", 0, 2550, int(self._mask_alpha * 10), lambda v: self._on_alpha_changed(v // 10)
+        )
+        # Fix label to show integer for alpha
+        self.alpha_val_lbl.setText(str(self._mask_alpha))
+        self.alpha_slider.valueChanged.disconnect()
+        self.alpha_slider.valueChanged.connect(lambda v: (self._on_alpha_changed(v // 10), self.alpha_val_lbl.setText(str(v // 10))))
         
         row1_layout.addWidget(clahe_col)
         row1_layout.addWidget(gamma_col)
+        
         
         # Philips CEUS Toggle (Pseudocoloring) - now in row 1
         self.philips_check = QCheckBox("Pseudocoloring")
@@ -426,6 +426,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                                      "Yellow → Peak Enhancement")
         self.philips_check.stateChanged.connect(self._on_philips_toggled)
         row1_layout.addWidget(self.philips_check)
+        row1_layout.addWidget(alpha_col)
 
         row2_layout.addWidget(width_ax_col)
         row2_layout.addWidget(width_sag_col)
@@ -484,6 +485,16 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self.width_cor_val_lbl.setText(f"{self._width_scale_coronal:.1f}")
         self._update_aspect_ratios()
         self._refresh_frames()
+        
+    def _on_alpha_changed(self, value: int) -> None:
+        """Handle alpha transparency change for the VOI mask."""
+        self._mask_alpha = int(value)
+
+        # Update the master overlap mask by blending all stored ROIs
+        self._roi_masks_overlap[self._roi_masks_overlap_1d, 3] = self._mask_alpha
+            
+        self._current_drawing_plane = None
+        self._refresh_frames()
 
     def _update_aspect_ratios(self) -> None:
         """Update the aspect ratios of the axes based on the plane-specific width scales."""
@@ -511,7 +522,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             # Index 2: Coronal (Plane 2)
             if self._ax_sag_cor_matplotlib_canvases[2]:
                 dx, dz = pix[0], pix[2]
-                aspect = (dx / dz if dz != 0 else 1.0) * self._width_scale_coronal
+                aspect = (dz / dx if dx != 0 else 1.0) * self._width_scale_coronal
                 fig2 = self._ax_sag_cor_matplotlib_canvases[2].figure
                 if fig2.axes:
                     fig2.axes[0].set_aspect(aspect)
@@ -537,21 +548,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _setup_matplotlib_canvases(self):
         """Setup matplotlib canvases for high-performance plane display."""
-        for i in range(3):
-            fig = plt.figure()
-            fig.patch.set_facecolor((0, 0, 0, 0))
+        for i, parent_label in enumerate(self._ax_sag_cor_planes):
+            fig, ax = plt.subplots(facecolor='black')
             fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+            ax.axis('off')
             canvas = FigureCanvas(fig)
-            canvas.figure.patch.set_facecolor((0, 0, 0, 0))
+            canvas.setParent(parent_label)
             canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            # Clear label text but keep the background/frame
+            parent_label.setText("")
             self._ax_sag_cor_matplotlib_canvases[i] = canvas
-            layout = QHBoxLayout(self._ax_sag_cor_planes[i])
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.addWidget(canvas, stretch=1)
-            self._ax_sag_cor_planes[i].setLayout(layout)
-            # Make canvas expand to fill its QLabel container
             # Install event filter on parent label for resize handling
-            self._ax_sag_cor_planes[i].installEventFilter(self)
+            parent_label.installEventFilter(self)
         # Initial sizing pass
         self._resize_all_canvases()
 
@@ -561,39 +569,23 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             if not canvas:
                 continue
             try:
-                fig = canvas.figure
-                if plane_ix == 0:  # Axial
-                    dy = self._image_data.pixdim[1]
-                    dx = self._image_data.pixdim[0]
-                    base_aspect = dy / dx if dx != 0 else 1
-                    aspect = base_aspect * self._width_scale_axial
-                elif plane_ix == 1:  # Sagittal
-                    dy = self._image_data.pixdim[1]
-                    dz = self._image_data.pixdim[2]
-                    base_aspect = dy / dz if dz != 0 else 1
-                    aspect = base_aspect * self._width_scale_sagittal
-                elif plane_ix == 2:  # Coronal
-                    dx = self._image_data.pixdim[0]
-                    dz = self._image_data.pixdim[2]
-                    base_aspect = dx / dz if dz != 0 else 1
-                    aspect = base_aspect * self._width_scale_coronal
-                else:
-                    self.show_error(f"Invalid plane index: {plane_ix}")
-                fig.clear()
-                ax = fig.add_subplot(111)
-                ax.axis('off')
+                # Reuse the axes already created by _setup_matplotlib_canvases
+                # (do NOT call fig.clear() — that destroys the padding-free subplots_adjust)
+                ax = canvas.figure.axes[0]
+
                 # Get initial slice
                 slice_arr = self._get_plane_slice(plane_ix, initializing=True)
                 mask_arr = self._get_mask_slice(plane_ix)
 
                 current_cmap = philips_cmap if self._use_philips_ceus else 'gray'
-                artist = ax.imshow(slice_arr, cmap=current_cmap, aspect=float(aspect), zorder=1, animated=True) # add vmin and vmax for the 0 - 255 show
+                artist = ax.imshow(slice_arr, cmap=current_cmap, interpolation='nearest',
+                                   zorder=1, vmin=0, vmax=255)
                 v_line = ax.axvline(x=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 h_line = ax.axhline(y=0, color='yellow', lw=0.8, animated=True, zorder=11)
-                seg_mask = ax.imshow(mask_arr, zorder=8, aspect=float(aspect), animated=True)
+                seg_mask = ax.imshow(mask_arr, interpolation='nearest', zorder=8)
                 roi_plot = ax.plot([], [], c='cyan', lw=1, zorder=9, animated=True)
                 point_scatter = ax.scatter([], [], c='red', s=5, marker='o', zorder=10, animated=True)
-                
+
                 self._ax_sag_cor_plane_artists[plane_ix] = artist
                 self._ax_sag_cor_crosshair_lines[plane_ix] = (v_line, h_line)
                 self._ax_sag_cor_point_scatters[plane_ix] = point_scatter
@@ -606,31 +598,33 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 self.show_error(f"Error initializing plane display {plane_ix}: {e}")
 
     def _get_plane_slice(self, plane_ix: int, initializing=False):
-        """Return 2D numpy slice for given plane index based on current crosshair."""
-        idx = self._get_plane_indices(plane_ix)
-        current_t = self._crosshair_xyzt[3]
+        """Extract a 2D image slice for the specified plane at current crosshair indices."""
+        x, y, z, t = self._crosshair_xyzt
         
         # Check if we need to enhance a new frame
-        if not initializing and (self._enhanced_cache is None or self._enhanced_cache_frame != current_t):
+        if not initializing and (self._enhanced_cache is None or self._enhanced_cache_frame != t):
             # Get the 3D volume for current time frame
-            current_frame_3d = self._pix_data[:, :, :, current_t]
+            current_frame_3d = self._pix_data[:, :, :, t]
             
             # Enhance the entire 3D volume ONCE per frame
             self._enhance_volume(current_frame_3d) # performs enhancement SYNCHRONOUSLY
-            self._enhanced_cache_frame = current_t
+            self._enhanced_cache_frame = t
         elif initializing:
-            self._enhanced_cache = self._image_data.pixel_data[:, :, :, current_t]  # Cache the initial frame without enhancement for faster startup
+            self._enhanced_cache = self._image_data.pixel_data[:, :, :, t]  # Cache the initial frame without enhancement for faster startup
+            
+        vol = self._enhanced_cache
         
-        # Extract the 2D slice from cached enhanced volume
-        slice_idx = list(idx[:3])  # Remove time dimension
-        arr = self._enhanced_cache[tuple(slice_idx)]
-        
-        if arr.ndim != 2:
-            arr = arr.squeeze()
-        # Axial plane (index 0) needs transpose for correct orientation
-        if plane_ix == 0:
-            arr = arr.T
-        return arr
+        if plane_ix == 0:  # Axial (XY) at Z -> show (Y, X)
+            return vol[:, :, z].T
+        elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
+            # Match DrawVOIWidget approach: arr.T then rot90(k=-1)
+            arr = vol[x, :, :]
+            arr_t = arr
+            return arr_t
+        elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Y, X)
+            # Mirror Axial for Coronal to match DrawVOI behavior
+            return vol[:, y, :].T
+        return np.zeros((10, 10))
     
     def _enhance_volume(self, volume_3d: np.ndarray) -> None:
         """Enhance a 3D image volume using predefined enhancement methods in the backend engine."""
@@ -664,12 +658,18 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
-        idx = self._get_plane_indices(plane_ix)[:-1] # no time dimension
-        arr = self._roi_masks_overlap[idx]
-        # Mask needs transpose for correct orientation to match the image slice
-        if plane_ix == 0:
-            arr = np.transpose(arr, (1, 0, 2))  # Transpose for axial plane
-        return arr
+        x, y, z, _ = self._crosshair_xyzt
+        if plane_ix == 0:  # Axial (XY) at Z -> show (Y, X)
+            arr = self._roi_masks_overlap[:, :, z, :]
+            return np.transpose(arr, (1, 0, 2))
+        elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
+            arr = self._roi_masks_overlap[x, :, :, :]
+            # arr_t = np.transpose(arr, (1, 0, 2))
+            return arr
+        elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Y, X)
+            arr = self._roi_masks_overlap[:, y, :, :]
+            return np.transpose(arr, (1, 0, 2))
+        return np.zeros((10, 10, 4), dtype=np.uint8)
 
     def _get_plane_indices(self, plane_ix: int) -> Tuple[int]:
         """Return a list of indices for the given plane."""
@@ -950,11 +950,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         elif plane_ix == 1:  # Sagittal
             target_slice_mask[fixed_val, :, :] = mask_2d
         elif plane_ix == 2:  # Coronal
-            target_slice_mask[:, fixed_val, :] = mask_2d
+            target_slice_mask[:, fixed_val, :] = mask_2d.T
 
         # Apply colors to the RGBA mask where the 3D mask is true
         current_roi_mask_rgba[target_slice_mask, 0] = 255  # Red
-        current_roi_mask_rgba[target_slice_mask, 3] = 128  # Alpha
+        current_roi_mask_rgba[target_slice_mask, 3] = self._mask_alpha  # Alpha
 
         # Store the original points and the generated mask
         self._drawn_rois.append((self._current_drawing_plane, current_roi_pts, current_roi_mask_rgba))
@@ -964,8 +964,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         for _, _, roi_mask in self._drawn_rois:
             # Add color channels, clipping at 255
             self._roi_masks_overlap[:,:,:,:3] = np.clip(self._roi_masks_overlap[:,:,:,:3].astype(np.uint16) + roi_mask[:,:,:,:3].astype(np.uint16), 0, 255).astype(np.uint8)
-            # Add alpha, clipping at a reasonable max to avoid full opacity
-            self._roi_masks_overlap[:,:,:,3] = np.clip(self._roi_masks_overlap[:,:,:,3].astype(np.uint16) + roi_mask[:,:,:,3].astype(np.uint16), 0, 128).astype(np.uint8)
+            self._roi_masks_overlap[:,:,:,3] = np.maximum(self._roi_masks_overlap[:,:,:,3].astype(np.uint16), roi_mask[:,:,:,3].astype(np.uint16)).astype(np.uint8)
+        self._roi_masks_overlap_1d = self._roi_masks_overlap[..., 0].astype(bool)
 
         # Clear points and hide the ROI plot for the next ROI
         self._plotted_pts.clear()
@@ -995,6 +995,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 self._roi_masks_overlap[:,:,:,:3] = np.clip(self._roi_masks_overlap[:,:,:,:3].astype(np.uint16) + roi_mask[:,:,:,:3].astype(np.uint16), 0, 255).astype(np.uint8)
                 # Add alpha, clipping at a reasonable max to avoid full opacity
                 self._roi_masks_overlap[:,:,:,3] = np.clip(self._roi_masks_overlap[:,:,:,3].astype(np.uint16) + roi_mask[:,:,:,3].astype(np.uint16), 0, 128).astype(np.uint8)
+        self._roi_masks_overlap_1d = self._roi_masks_overlap[..., 0].astype(bool)
 
         # Hide the button if no ROIs are left to undo
         if not self._drawn_rois:
@@ -1016,6 +1017,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Reset the drawing state
         self._drawn_rois.clear()
         self._roi_masks_overlap.fill(0)
+        self._roi_masks_overlap_1d.fill(0)
         self._plotted_pts.clear()
         self._current_drawing_plane = None
         
@@ -1027,7 +1029,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
     def _on_save_voi_clicked(self):
         self._hide_widget_lists([self._voi_decision_widgets])
-        self._show_widget_lists([self._save_voi_widgets, self._voi_alpha_widgets])
+        self._show_widget_lists([self._save_voi_widgets])
         self._refresh_frames()
 
     def _on_export_voi_clicked(self):
@@ -1043,7 +1045,9 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     def _on_save_voi_finished(self, msg):
         self._ui.saving_voi_label.hide()
         self._show_widget_lists([self._save_voi_widgets])
-        print(msg)
+        # print(msg)
+        if hasattr(self, '_last_saved_path'):
+            self.segmentation_saved.emit(str(self._last_saved_path))
 
     def _on_save_voi_error(self, err):
         self._ui.saving_voi_label.hide()
@@ -1181,7 +1185,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if not canvas:
             return
 
-        canvas.figure.tight_layout(pad=0)
+        # Match canvas size to the QLabel/placeholder size so it fills edge-to-edge
+        canvas_width = label_widget.width()
+        canvas_height = label_widget.height()
+        canvas.setFixedSize(canvas_width, canvas_height)
+        canvas.move(0, 0)
         canvas.draw_idle()
 
     def _resize_all_canvases(self):
@@ -1272,11 +1280,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         out_name = out_name + '.nii.gz' if not out_name.endswith('.nii.gz') else out_name
 
         out_path = Path(self._ui.save_folder_input.text()) / out_name
+        self._last_saved_path = out_path
 
         affine = np.eye(4)
         for i, res in enumerate(self._image_data.pixdim[:3]):
             affine[i, i] = res
-        voi_mask = np.array(self._roi_masks_overlap[:, :, :, 0] / 255.0).astype(np.uint8)
+        voi_mask = self._roi_masks_overlap_1d.astype(np.uint8)
         niiarray = nib.Nifti1Image(voi_mask, affine)
         niiarray.header["descrip"] = self._image_data.scan_name
         nib.save(niiarray, out_path)
@@ -1296,7 +1305,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Update the master overlap mask with the new 3D VOI
         self._roi_masks_overlap.fill(0)
         self._roi_masks_overlap[voi_mask, 0] = 255  # Red
-        self._roi_masks_overlap[voi_mask, 3] = 128  # Alpha
+        self._roi_masks_overlap[voi_mask, 3] = self._mask_alpha  # Alpha
+        self._roi_masks_overlap_1d = voi_mask
         
         self._set_interp_loading(False)
         self._refresh_frames()

@@ -15,6 +15,8 @@ from .views.seg_type_selection_widget import SegTypeSelectionWidget
 from .views.seg_file_selection_widget import SegFileSelectionWidget
 from .views.draw_roi_widget import DrawROIWidget
 from .views.draw_voi_widget import DrawVOIWidget
+from .views.roi_preview_widget import ROIPreviewWidget
+from .views.voi_preview_widget import VOIPreviewWidget
 from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
 
 
@@ -48,10 +50,12 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._seg_type_widget: Optional[SegTypeSelectionWidget] = None
         self._seg_file_widget: Optional[SegFileSelectionWidget] = None
         self._voi_drawing_widget: Optional[DrawVOIWidget] = None
+        self._roi_drawing_widget: Optional[DrawROIWidget] = None
+        self._roi_preview_widget: Optional[ROIPreviewWidget] = None
+        self._voi_preview_widget: Optional[VOIPreviewWidget] = None
         
         # Current state
         self._selected_seg_type: Optional[str] = None
-        self._seg_data: Optional[CeusSeg] = None
 
         # Start with segmentation type selection
         self.show_seg_type_selection()
@@ -109,6 +113,9 @@ class SegLoadingViewCoordinator(QStackedWidget):
         widgets_to_remove = [
             self._seg_file_widget, 
             self._voi_drawing_widget,
+            self._roi_drawing_widget,
+            self._roi_preview_widget,
+            self._voi_preview_widget
         ]
         
         for widget in widgets_to_remove:
@@ -120,11 +127,11 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._seg_file_widget = None
         self._roi_drawing_widget = None
         self._voi_drawing_widget = None
-        self._seg_preview_widget = None
+        self._roi_preview_widget = None
+        self._voi_preview_widget = None
         
         # Clear state
         self._selected_seg_type = None
-        self._seg_data = None
         
         # Return to seg type widget
         if self._seg_type_widget:
@@ -181,6 +188,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._voi_drawing_widget = DrawVOIWidget(self._image_data)
 
         # Connect signals to handle user actions
+        self._voi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
         self._voi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._voi_drawing_widget.close_requested.connect(self.close_requested.emit)
         self._voi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
@@ -191,8 +199,14 @@ class SegLoadingViewCoordinator(QStackedWidget):
 
     def preview_modified_image(self, modified_image: UltrasoundImage, frame: int) -> None:
         """Show the preprocessed data in the VOI drawing widget."""
-        if self._voi_drawing_widget:
+        if self._roi_preview_widget:
+            self._roi_preview_widget.update_enhancement_cache(modified_image.pixel_data, frame)
+        elif self._voi_preview_widget:
+            self._voi_preview_widget.update_enhancement_cache(modified_image.pixel_data, frame)
+        elif self._voi_drawing_widget:
             self._voi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)
+        elif self._roi_drawing_widget:
+            self._roi_drawing_widget.update_enhancement_cache(modified_image.pixel_data, frame)
         else:
             raise RuntimeError("VOI drawing widget not initialized")
 
@@ -201,16 +215,77 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._roi_drawing_widget = DrawROIWidget(self._image_data)
 
         # Connect signals to handle user actions
+        self._roi_drawing_widget.segmentation_saved.connect(self._on_segmentation_saved)
         self._roi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._roi_drawing_widget.close_requested.connect(self.close_requested.emit)
+        self._roi_drawing_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
 
         # Add to stack and show
         self.addWidget(self._roi_drawing_widget)
         self.setCurrentWidget(self._roi_drawing_widget)
 
+    def show_segmentation_preview(self, seg_data: CeusSeg) -> None:
+        """
+        Show the segmentation preview widget.
+        
+        Args:
+            seg_data: Loaded segmentation data
+        """
+        # Create and setup segmentation preview widget
+        preview_widget = None
+        if seg_data.seg_mask.ndim == 2:
+            self._roi_preview_widget = ROIPreviewWidget(self._image_data, seg_data)
+            preview_widget = self._roi_preview_widget
+        elif seg_data.seg_mask.ndim == 3:
+            self._voi_preview_widget = VOIPreviewWidget(self._image_data, seg_data)
+            preview_widget = self._voi_preview_widget
+        else:
+            raise NotImplementedError("Only 2D and 3D frames are supported")
+        
+        # Connect signals to handle user actions
+        preview_widget.segmentation_confirmed.connect(
+            lambda: self.user_action.emit('segmentation_confirmed', seg_data)
+        )
+        preview_widget.back_requested.connect(self.back_from_preview)
+        preview_widget.close_requested.connect(self.close_requested.emit)
+        preview_widget.apply_preprocs_preview.connect(self._on_preprocs_preview_requested)
+
+        # Add to stack and show
+        self.addWidget(preview_widget)
+        self.setCurrentWidget(preview_widget)
+
     # ============================================================================
     # USER ACTION HANDLING - Process user interactions and communicate with controller
     # ============================================================================
+    
+    def back_from_preview(self):
+        if not self._roi_drawing_widget and not self._voi_drawing_widget:
+            self.reset_to_seg_type_selection()
+        elif self._roi_drawing_widget:
+            self.removeWidget(self._roi_preview_widget)
+            self._roi_preview_widget.deleteLater()
+            self._roi_preview_widget = None
+            self.setCurrentWidget(self._roi_drawing_widget)
+        elif self._voi_drawing_widget:
+            self.removeWidget(self._voi_preview_widget)
+            self._voi_preview_widget.deleteLater()
+            self._voi_preview_widget = None
+            self.setCurrentWidget(self._voi_drawing_widget)
+        else:
+            raise ValueError("Undefine state. Should never get here")
+
+    def _on_segmentation_saved(self, file_path: str) -> None:
+        """
+        Handle segmentation saved from the manual drawing widget.
+        
+        Args:
+            file_path: Path to the saved segmentation file
+        """
+        file_data = {
+            'seg_path': file_path,
+            'seg_type': self._selected_seg_type
+        }
+        self._emit_user_action('load_segmentation', file_data)
 
     def _on_seg_type_selected(self, seg_type_name: str) -> None:
         """
