@@ -48,20 +48,20 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
         self._ui.setupUi(self)
         
         # Configure layout for parameters configuration (assuming similar structure to QUS)
-        if hasattr(self._ui, 'full_screen_layout'):
-            self.setLayout(self._ui.full_screen_layout)
+        self.setLayout(self._ui.full_screen_layout)
         
-        # Update labels to reflect inputted image
-        if hasattr(self._ui, 'image_path_input') and self._image_data:
-            scan_name = getattr(self._image_data, 'scan_name', 'Unknown')
-            self._ui.image_path_input.setText(scan_name)
+        # Configure stretch factors
+        self._ui.full_screen_layout.setStretchFactor(self._ui.side_bar_layout, 1)
+        self._ui.full_screen_layout.setStretchFactor(self._ui.analysis_params_layout, 10)
+        
+        # Update labels to reflect inputted image and phantom
+        self._ui.image_path_input.setText(getattr(self._image_data, 'scan_name', "No image loaded"))
+        self._ui.phantom_path_input.setText(getattr(self._image_data, 'phantom_name', "No phantom loaded"))
 
     def connect_signals(self) -> None:
         """Connect UI signals to internal handlers."""
-        if hasattr(self._ui, 'run_analysis_button'):
-            self._ui.run_analysis_button.clicked.connect(self._on_run_analysis_clicked)
-        if hasattr(self._ui, 'back_button'):
-            self._ui.back_button.clicked.connect(self._on_back_clicked)
+        self._ui.run_analysis_button.clicked.connect(self._on_run_analysis_clicked)
+        self._ui.back_button.clicked.connect(self._on_back_clicked)
 
     def set_required_params(self, required_params: List[str], selected_functions: List[str]) -> None:
         """

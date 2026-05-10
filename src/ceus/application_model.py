@@ -17,6 +17,8 @@ from engines.ceus.src.entrypoints import scan_loading_step, seg_loading_step
 from engines.ceus.src.data_objs.image import UltrasoundImage
 from engines.ceus.src.data_objs.seg import CeusSeg
 from engines.ceus.src.time_series_analysis.curves.framework import CurvesAnalysis
+from engines.ceus.src.time_series_analysis.options import get_required_kwargs
+from engines.ceus.src.image_preprocessing.options import get_required_im_preproc_kwargs
 
 
 class ScanLoadingWorker(QThread):
@@ -357,7 +359,6 @@ class ApplicationModel(BaseModel):
         Returns:
             list: List of required keyword arguments
         """
-        from engines.ceus.src.image_preprocessing.options import get_required_im_preproc_kwargs
         return get_required_im_preproc_kwargs(func_names)
 
     def apply_preprocessing(self, func_configs: List[Dict[str, Any]]) -> None:
@@ -723,7 +724,6 @@ class ApplicationModel(BaseModel):
             list: List of parameter names required
         """
         try:
-            from engines.ceus.src.time_series_analysis.options import get_required_kwargs
             return get_required_kwargs(analysis_type, selected_functions)
         except Exception as e:
             print(f"Error getting required params: {e}")

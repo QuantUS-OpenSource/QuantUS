@@ -40,10 +40,10 @@
        <number>0</number>
       </property>
       <property name="sizeConstraint">
-       <enum>QLayout::SizeConstraint::SetMaximumSize</enum>
+       <enum>QLayout::SetMaximumSize</enum>
       </property>
       <item>
-       <widget class="QWidget" name="sidebar" native="true">
+       <widget class="QWidget" name="sidebar_3" native="true">
         <property name="minimumSize">
          <size>
           <width>341</width>
@@ -64,7 +64,7 @@
 	background-color: rgb(28, 0, 101);
 }</string>
         </property>
-        <widget class="QFrame" name="imageSelectionSidebar">
+        <widget class="QFrame" name="imageSelectionSidebar_3">
          <property name="geometry">
           <rect>
            <x>0</x>
@@ -92,12 +92,12 @@
 }</string>
          </property>
          <property name="frameShape">
-          <enum>QFrame::Shape::StyledPanel</enum>
+          <enum>QFrame::StyledPanel</enum>
          </property>
          <property name="frameShadow">
-          <enum>QFrame::Shadow::Raised</enum>
+          <enum>QFrame::Raised</enum>
          </property>
-         <widget class="QLabel" name="imageSelectionLabelSidebar">
+         <widget class="QLabel" name="imageSelectionLabelSidebar_3">
           <property name="geometry">
            <rect>
             <x>70</x>
@@ -119,10 +119,10 @@
            <string>Image Selection:</string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
+           <set>Qt::AlignCenter</set>
           </property>
          </widget>
-         <widget class="QLabel" name="imageLabel">
+         <widget class="QLabel" name="imageLabel_3">
           <property name="geometry">
            <rect>
             <x>-60</x>
@@ -144,10 +144,10 @@
            <string>Image:</string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
+           <set>Qt::AlignCenter</set>
           </property>
          </widget>
-         <widget class="QLabel" name="phantomLabel">
+         <widget class="QLabel" name="phantomLabel_3">
           <property name="geometry">
            <rect>
             <x>-50</x>
@@ -169,7 +169,7 @@
            <string>Phantom:</string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
+           <set>Qt::AlignCenter</set>
           </property>
          </widget>
          <widget class="QLabel" name="image_path_input">
@@ -193,7 +193,7 @@
            <string>Sample filename </string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignLeading|Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignVCenter</set>
+           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
           </property>
          </widget>
          <widget class="QLabel" name="phantom_path_input">
@@ -217,11 +217,11 @@
            <string>Sample filename </string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignLeading|Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignVCenter</set>
+           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
           </property>
          </widget>
         </widget>
-        <widget class="QFrame" name="segmentationSidebar">
+        <widget class="QFrame" name="segmentationSidebar_3">
          <property name="geometry">
           <rect>
            <x>0</x>
@@ -243,12 +243,12 @@
 }</string>
          </property>
          <property name="frameShape">
-          <enum>QFrame::Shape::StyledPanel</enum>
+          <enum>QFrame::StyledPanel</enum>
          </property>
          <property name="frameShadow">
-          <enum>QFrame::Shadow::Raised</enum>
+          <enum>QFrame::Raised</enum>
          </property>
-         <widget class="QLabel" name="segmentationSidebarLabel">
+         <widget class="QLabel" name="segmentationSidebarLabel_3">
           <property name="geometry">
            <rect>
             <x>0</x>
@@ -270,11 +270,11 @@
            <string>Segmentation Selection</string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
+           <set>Qt::AlignCenter</set>
           </property>
          </widget>
         </widget>
-        <widget class="QFrame" name="analysisParamsSidebar">
+        <widget class="QFrame" name="analysisParamsSidebar_3">
          <property name="geometry">
           <rect>
            <x>0</x>
@@ -296,12 +296,12 @@
 }</string>
          </property>
          <property name="frameShape">
-          <enum>QFrame::Shape::StyledPanel</enum>
+          <enum>QFrame::StyledPanel</enum>
          </property>
          <property name="frameShadow">
-          <enum>QFrame::Shadow::Raised</enum>
+          <enum>QFrame::Raised</enum>
          </property>
-         <widget class="QLabel" name="analysisParamsLabel">
+         <widget class="QLabel" name="analysisParamsLabel_3">
           <property name="geometry">
            <rect>
             <x>0</x>
@@ -323,11 +323,11 @@
            <string>Analysis Parameter Selection</string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
+           <set>Qt::AlignCenter</set>
           </property>
          </widget>
         </widget>
-        <widget class="QFrame" name="rfAnalysisSidebar">
+        <widget class="QFrame" name="rfAnalysisSidebar_3">
          <property name="geometry">
           <rect>
            <x>0</x>
@@ -355,12 +355,12 @@
 }</string>
          </property>
          <property name="frameShape">
-          <enum>QFrame::Shape::StyledPanel</enum>
+          <enum>QFrame::StyledPanel</enum>
          </property>
          <property name="frameShadow">
-          <enum>QFrame::Shadow::Raised</enum>
+          <enum>QFrame::Raised</enum>
          </property>
-         <widget class="QLabel" name="rfAnalysisLabel">
+         <widget class="QLabel" name="rfAnalysisLabel_3">
           <property name="geometry">
            <rect>
             <x>0</x>
@@ -379,14 +379,14 @@
 }</string>
           </property>
           <property name="text">
-           <string>CEUS Analysis</string>
+           <string>Radio Frequency Data Analysis</string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
+           <set>Qt::AlignCenter</set>
           </property>
          </widget>
         </widget>
-        <widget class="QFrame" name="exportResultsSidebar">
+        <widget class="QFrame" name="exportResultsSidebar_3">
          <property name="geometry">
           <rect>
            <x>0</x>
@@ -414,12 +414,12 @@
 }</string>
          </property>
          <property name="frameShape">
-          <enum>QFrame::Shape::StyledPanel</enum>
+          <enum>QFrame::StyledPanel</enum>
          </property>
          <property name="frameShadow">
-          <enum>QFrame::Shadow::Raised</enum>
+          <enum>QFrame::Raised</enum>
          </property>
-         <widget class="QLabel" name="exportResultsLabel">
+         <widget class="QLabel" name="exportResultsLabel_3">
           <property name="geometry">
            <rect>
             <x>20</x>
@@ -441,14 +441,14 @@
            <string>Visualization / Export</string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
+           <set>Qt::AlignCenter</set>
           </property>
          </widget>
         </widget>
        </widget>
       </item>
       <item>
-       <widget class="QFrame" name="gridFrame">
+       <widget class="QFrame" name="gridFrame_3">
         <property name="maximumSize">
          <size>
           <width>341</width>
@@ -460,9 +460,9 @@
 	background-color: rgb(28, 0, 101);
 }</string>
         </property>
-        <layout class="QGridLayout" name="backButtonGrid" rowstretch="0,0">
+        <layout class="QGridLayout" name="backButtonGrid_3" rowstretch="0,0">
          <property name="sizeConstraint">
-          <enum>QLayout::SizeConstraint::SetMinAndMaxSize</enum>
+          <enum>QLayout::SetMinAndMaxSize</enum>
          </property>
          <property name="leftMargin">
           <number>10</number>
@@ -477,9 +477,9 @@
           <number>10</number>
          </property>
          <item row="0" column="0">
-          <spacer name="verticalSpacer">
+          <spacer name="verticalSpacer_3">
            <property name="orientation">
-            <enum>Qt::Orientation::Vertical</enum>
+            <enum>Qt::Vertical</enum>
            </property>
            <property name="sizeHint" stdset="0">
             <size>
@@ -490,9 +490,9 @@
           </spacer>
          </item>
          <item row="1" column="1">
-          <spacer name="horizontalSpacer">
+          <spacer name="horizontalSpacer_3">
            <property name="orientation">
-            <enum>Qt::Orientation::Horizontal</enum>
+            <enum>Qt::Horizontal</enum>
            </property>
            <property name="sizeHint" stdset="0">
             <size>
@@ -564,13 +564,10 @@
          <string>Analysis in Progress...</string>
         </property>
         <property name="textFormat">
-         <enum>Qt::TextFormat::AutoText</enum>
+         <enum>Qt::PlainText</enum>
         </property>
         <property name="scaledContents">
          <bool>false</bool>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignmentFlag::AlignCenter</set>
         </property>
         <property name="wordWrap">
          <bool>true</bool>
@@ -590,13 +587,10 @@
          <string>Configure Analysis Parameters:</string>
         </property>
         <property name="textFormat">
-         <enum>Qt::TextFormat::AutoText</enum>
+         <enum>Qt::PlainText</enum>
         </property>
         <property name="scaledContents">
          <bool>false</bool>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignmentFlag::AlignCenter</set>
         </property>
         <property name="wordWrap">
          <bool>true</bool>
@@ -613,8 +607,8 @@
           <rect>
            <x>0</x>
            <y>0</y>
-           <width>409</width>
-           <height>284</height>
+           <width>407</width>
+           <height>294</height>
           </rect>
          </property>
          <layout class="QVBoxLayout" name="params_layout"/>
@@ -633,12 +627,9 @@
         <property name="text">
          <string>Running Analysis....</string>
         </property>
-        <property name="alignment">
-         <set>Qt::AlignmentFlag::AlignCenter</set>
-        </property>
        </widget>
       </item>
-      <item alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+      <item>
        <widget class="QPushButton" name="run_analysis_button">
         <property name="minimumSize">
          <size>
@@ -667,9 +658,6 @@
       </item>
       <item>
        <spacer name="verticalSpacer_10">
-        <property name="orientation">
-         <enum>Qt::Orientation::Vertical</enum>
-        </property>
         <property name="sizeHint" stdset="0">
          <size>
           <width>20</width>

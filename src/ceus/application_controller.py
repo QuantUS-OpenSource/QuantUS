@@ -5,11 +5,11 @@ Main Application Controller for QuantUS GUI MVC architecture
 import sys
 import qdarktheme
 from typing import Optional
-from PyQt6.QtWidgets import QApplication, QStackedWidget
+from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QStackedWidget
 
 from .application_model import ApplicationModel
-from .image_loading.image_loading_view_coordinator import ImageLoadingViewCoordinator
 from .image_loading.image_loading_controller import ImageLoadingController
 from .seg_loading.seg_loading_controller import SegmentationLoadingController
 from .analysis_loading.analysis_loading_controller import AnalysisLoadingController
@@ -65,12 +65,7 @@ class ApplicationController(QObject):
     def _connect_model_signals(self) -> None:
         """Connect unified model signals to application controller."""
         self._model.image_loaded.connect(self._initialize_segmentation_loading)
-        self._model.segmentation_loaded.connect(self._on_segmentation_loaded)
         self._model.error_occurred.connect(self._on_model_error)
-        
-    def _on_segmentation_loaded(self, seg_data: CeusSeg) -> None:
-        """Handle segmentation loading completion."""
-        self._on_segmentation_action('segmentation_confirmed', seg_data)
 
     def _initialize_image_loading(self) -> None:
         """Initialize the image loading screen."""
@@ -119,7 +114,6 @@ class ApplicationController(QObject):
         """
         print(f"DEBUG: Application model error: {error_message}")
         # Show error message to user
-        from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self._widget_stack, "Error", error_message)
         
     def _on_image_action(self, action_name: str, action_data) -> None:

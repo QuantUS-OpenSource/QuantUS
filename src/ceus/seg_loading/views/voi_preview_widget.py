@@ -15,9 +15,8 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 
 from ...mvc.base_view import BaseViewMixin
-from ..ui.draw_voi_ui import Ui_voi_drawer
+from ..ui.voi_preview_ui import Ui_confirmVoi
 from engines.ceus.src.data_objs import UltrasoundImage, CeusSeg
-from engines.ceus.src.image_preprocessing.functions import enhance_clahe, enhance_gamma
 
 # Philips CEUS Colormap: Grayscale -> Red -> Yellow
 philips_colors = [
@@ -28,7 +27,7 @@ philips_colors = [
 ]
 philips_cmap = LinearSegmentedColormap.from_list("philips_ceus", philips_colors)
 
-class SegPreviewWidget(QWidget, BaseViewMixin):
+class VOIPreviewWidget(QWidget, BaseViewMixin):
     """
     Widget for previewing and confirming segmentation for CEUS.
     Reuses UI components from VOI drawer but in a read-only preview mode.
@@ -38,11 +37,12 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
     segmentation_confirmed = pyqtSignal()
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
+    apply_preprocs_preview = pyqtSignal(list)  # List of dicts with 'name' and 'kwargs' keys
 
     def __init__(self, image_data: UltrasoundImage, seg_data: CeusSeg, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
-        self._ui = Ui_voi_drawer()
+        self._ui = Ui_confirmVoi()
         self._image_data = image_data
         self._seg_data = seg_data
         self._pix_data = image_data.pixel_data
@@ -157,68 +157,12 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self.setLayout(self._ui.full_screen_layout)
         self._ui.full_screen_layout.setStretchFactor(self._ui.side_bar_layout, 1)
         self._ui.full_screen_layout.setStretchFactor(self._ui.voi_layout, 10)
-        
-        # Widget groups matching DrawVOIWidget for consistency
-        self._drawing_widgets = [
-            self._ui.draw_roi_button,
-            self._ui.interpolate_voi_button,
-            self._ui.undo_last_pt_button,
-            self._ui.close_roi_button,
-            self._ui.undo_last_roi_button,
-            self._ui.construct_voi_label,
-        ]
-        
-        # Add a "Confirm & Analysis" button programmatically
-        self.confirm_review_button = QPushButton("Confirm && Analysis")
-        self.confirm_review_button.setMinimumSize(self._ui.save_voi_button.minimumSize())
-        self.confirm_review_button.setMaximumSize(self._ui.save_voi_button.maximumSize())
-        self.confirm_review_button.setStyleSheet(self._ui.save_voi_button.styleSheet())
-        
-        # Insert it into the layout that has Restart and Save
-        self._ui.horizontalLayout_2.addWidget(self.confirm_review_button)
-        
-        # Update existing button texts for clarity in preview mode
-        self._ui.restart_voi_button.setText("Review / Redraw")
-        self._ui.save_voi_button.setText("Save Setup")
-        
-        self._voi_decision_widgets = [
-            self._ui.restart_voi_button,
-            self._ui.save_voi_button,
-            self.confirm_review_button
-        ]
-        
-        self._save_voi_widgets = [
-            self._ui.back_from_save_button,
-            self._ui.dest_folder_label,
-            self._ui.voi_name_label,
-            self._ui.save_folder_input,
-            self._ui.save_name_input,
-            self._ui.choose_save_folder_button,
-            self._ui.clear_save_folder_button,
-            self._ui.export_voi_button,
-        ]
-        
-        self._voi_alpha_widgets = [
-            self._ui.alpha_label,
-            self._ui.alpha_of_label,
-            self._ui.alpha_spin_box,
-            self._ui.alpha_status,
-            self._ui.alpha_total
-        ]
 
         # Initial visibility
         self._ui.scan_name_input.setText(self._image_data.scan_name)
         self._ui.segSidebarLabel_2.setText("Segmentation Selection")
         self._ui.toggle_crosshair_visibility_button.setText('Hide Crosshair')
         self._ui.cur_slice_label.setText("Current Frame:")
-        
-        self._hide_widget_lists([self._drawing_widgets, self._save_voi_widgets, self._voi_alpha_widgets])
-        self._show_widget_lists([self._voi_decision_widgets])
-        
-        # Hide original plane labels (replaced by canvases)
-        # Note: We do NOT hide ax_plane, sag_plane, cor_plane here because they are needed as containers
-        for widget in [self._ui.interp_loading_label, self._ui.saving_voi_label]:
-            widget.hide()
 
         self._ui.navigating_label.hide()
         self._ui.observing_label.show()
@@ -517,8 +461,7 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
             # Match DrawVOIWidget approach: arr.T then rot90(k=-1)
             arr = vol[x, :, :]
-            arr_t = arr.T
-            return np.rot90(arr_t, k=-1)
+            return arr
         elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Y, X)
             # Mirror Axial for Coronal to match DrawVOI behavior
             return vol[:, y, :].T
@@ -533,9 +476,7 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
             return np.transpose(arr, (1, 0, 2))
         elif plane_ix == 1:  # Sagittal (YZ) at X -> show (Z, Y) then rotate 90 CW -> (Y, Z)
             arr = self._roi_masks_overlap[x, :, :, :]
-            # Consistent with DrawVOIWidget: (1, 0, 2) then rot90(k=-1)
-            arr_t = np.transpose(arr, (1, 0, 2))
-            return np.rot90(arr_t, k=-1)
+            return arr
         elif plane_ix == 2:  # Coronal (XZ) at Y -> show (Y, X)
             # Mirror Axial for Coronal to match DrawVOI behavior
             arr = self._roi_masks_overlap[:, y, :, :]
@@ -543,26 +484,59 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         return np.zeros((10, 10, 4), dtype=np.uint8)
 
     def _get_enhanced_volume(self, t: int) -> np.ndarray:
-        """Apply image processing and return the 3D volume at frame t."""
+        """Return the enhanced 3D volume at frame t, requesting enhancement via the controller if needed."""
         if self._enhanced_cache is not None and self._enhanced_cache_frame == t:
             return self._enhanced_cache
-        
-        # Extract the 3D volume for current frame
+
+        # Extract the 3D volume for current frame and wrap it in a temporary
+        # UltrasoundImage so the controller-side preprocessors receive the
+        # same data structure they expect.
         vol_3d = self._pix_data[:, :, :, t]
-        
-        # Create a temporary UltrasoundImage for the engine preprocessors
         temp_im = UltrasoundImage(self._image_data.scan_path)
         temp_im.pixel_data = vol_3d
         temp_im.pixdim = self._image_data.pixdim
         temp_im.frame_rate = self._image_data.frame_rate
-        
-        # Apply backend engine functions
-        temp_im = enhance_clahe(temp_im, clip_limit=self._clahe_clip_limit)
-        temp_im = enhance_gamma(temp_im, gamma=self._gamma)
-        
-        self._enhanced_cache = temp_im.pixel_data
-        self._enhanced_cache_frame = t
-        return self._enhanced_cache
+
+        clahe_preproc_dict = {
+            'name': 'enhance_clahe',
+            'image_data': temp_im,
+            'frame_ix': t,
+            'kwargs': {
+                'clip_limit': self._clahe_clip_limit,
+                'tile_grid_size': (8, 8),
+            }
+        }
+
+        gamma_preproc_dict = {
+            'name': 'enhance_gamma',
+            'image_data': None,  # signal to reuse the already CLAHE-enhanced image
+            'frame_ix': t,
+            'kwargs': {
+                'gamma': self._gamma,
+            }
+        }
+
+        # Delegate to the controller via signal (synchronous slot expected on the
+        # other end, matching the pattern in DrawROIWidget).
+        self.apply_preprocs_preview.emit([clahe_preproc_dict, gamma_preproc_dict])
+
+        # The cache will have been populated synchronously by update_enhancement_cache
+        # before this returns
+        if self._enhanced_cache_frame >= 0: assert self._enhanced_cache_frame == t
+        if self._enhanced_cache is not None:
+            return self._enhanced_cache
+        return vol_3d
+
+    def update_enhancement_cache(self, enhanced_vol: np.ndarray, frame: int) -> None:
+        """Receive the processed 3D volume from the controller and store it.
+
+        Args:
+            enhanced_vol: The enhanced spatial volume (x, y, z) for the given frame.
+            frame:        The time index (t) this volume corresponds to.
+        """
+        self._enhanced_cache = enhanced_vol
+        self._enhanced_cache_frame = frame
+        self._refresh_frames()
 
     def _setup_all_plane_animations(self) -> None:
         """Setup refresh animations for each matplotlib canvas."""
@@ -619,39 +593,19 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
         self._ui.cur_slice_spin_box.valueChanged.connect(lambda v: self._ui.cur_slice_slider.setValue(int(v)-1))
         self._ui.toggle_crosshair_visibility_button.clicked.connect(self._on_toggle_crosshair)
         self._ui.back_button.clicked.connect(self._on_back_requested)
-
-        # Decision Buttons
-        self.confirm_review_button.clicked.connect(self._on_confirm_review)
-        self._ui.restart_voi_button.clicked.connect(self._on_back_requested)
-        self._ui.save_voi_button.clicked.connect(self._on_save_voi_clicked)
+        self._ui.confirm_voi_button.clicked.connect(self.segmentation_confirmed.emit)
         
-        # Save Form Actions
-        self._ui.back_from_save_button.clicked.connect(self._on_back_from_save_clicked)
-        self._ui.choose_save_folder_button.clicked.connect(self._on_choose_save_folder)
-        self._ui.clear_save_folder_button.clicked.connect(lambda: self._ui.save_folder_input.clear())
-        self._ui.export_voi_button.clicked.connect(self._on_export_voi_clicked)
+    def keyPressEvent(self, event):  # type: ignore
+        """Handle key presses for quick actions (e.g., 'd' to toggle draw ROI)."""
+        if event.key() == Qt.Key.Key_H:
+            self._on_toggle_crosshair()
+            return
+        super().keyPressEvent(event)
 
     def _on_back_requested(self):
         """Handle back request with cleanup."""
         self._cleanup_animations()
         self.back_requested.emit()
-
-    def _on_confirm_review(self):
-        """Handle confirmation with cleanup."""
-        self._cleanup_animations()
-        self.segmentation_confirmed.emit()
-
-    def _on_save_voi_clicked(self) -> None:
-        """Switch to the save file configuration menu."""
-        self._hide_widget_lists([self._voi_decision_widgets])
-        self._show_widget_lists([self._save_voi_widgets, self._voi_alpha_widgets])
-        # Default save name
-        self._ui.save_name_input.setText(f"{self._image_data.scan_name}_mask")
-
-    def _on_back_from_save_clicked(self) -> None:
-        """Switch back from save menu to decision menu."""
-        self._hide_widget_lists([self._save_voi_widgets, self._voi_alpha_widgets])
-        self._show_widget_lists([self._voi_decision_widgets])
 
     def closeEvent(self, event):
         """Clean up animations and canvases before the widget is destroyed."""
@@ -667,49 +621,6 @@ class SegPreviewWidget(QWidget, BaseViewMixin):
                 self._ax_sag_cor_matplotlib_canvases[i] = None
         
         super().closeEvent(event)
-
-    def _on_choose_save_folder(self) -> None:
-        """Open directory dialog for saving."""
-        folder = QFileDialog.getExistingDirectory(self, "Select Save Directory")
-        if folder:
-            self._ui.save_folder_input.setText(folder)
-
-    def _on_export_voi_clicked(self) -> None:
-        """Export the current 3D mask to NIfTI."""
-        folder_path = self._ui.save_folder_input.text()
-        file_name = self._ui.save_name_input.text()
-        
-        if not folder_path or not Path(folder_path).is_dir():
-            self.show_error("Please select a valid folder.")
-            return
-        if not file_name:
-            self.show_error("Please enter a file name.")
-            return
-
-        if not file_name.endswith('.nii.gz'):
-            file_name += '.nii.gz'
-        
-        out_path = Path(folder_path) / file_name
-        
-        try:
-            self.show_loading()
-            # Construct affine
-            affine = np.eye(4)
-            for i, res in enumerate(self._image_data.pixdim[:3]):
-                affine[i, i] = res
-            
-            # The mask is stored in self._seg_data.seg_mask
-            mask = self._seg_data.seg_mask
-            nii_img = nib.Nifti1Image(mask, affine)
-            nii_img.header["descrip"] = self._image_data.scan_name
-            nib.save(nii_img, out_path)
-            
-            self.hide_loading()
-            # After export, show decision again
-            self._on_back_from_save_clicked()
-        except Exception as e:
-            self.hide_loading()
-            self.show_error(f"Export failed: {str(e)}")
 
     def _on_slice_slider_changed(self, value: int) -> None:
         """Handle time-series frame change."""
