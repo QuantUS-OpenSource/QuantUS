@@ -234,6 +234,15 @@ class SegLoadingViewCoordinator(QStackedWidget):
             'padding': padding,
         })
 
+    def show_voi_drawing_with_seg(self, seg_data, initial_frame: int = 0) -> None:
+        """Show the VOI drawing widget pre-populated with a loaded segmentation mask.
+
+        Used when loading from a NIfTI file so the user can review the mask and
+        optionally apply motion compensation before confirming.
+        """
+        self.show_voi_drawing(initial_frame)
+        self._voi_drawing_widget.load_existing_mask(seg_data)
+
     def show_roi_drawing(self) -> None:
         """Show the ROI drawing widget."""
         self._roi_drawing_widget = DrawROIWidget(self._image_data)

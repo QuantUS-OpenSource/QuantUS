@@ -2109,3 +2109,27 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         self._set_interp_loading(False)
         self._refresh_frames()
+
+    def load_existing_mask(self, seg_data) -> None:
+        """Load a pre-existing segmentation mask (e.g. from a NIfTI file) into the widget.
+
+        Mirrors _on_interpolation_finished but accepts a CeusSeg object directly so
+        the user can review and optionally apply motion compensation before confirming.
+        """
+        mask = getattr(seg_data, 'seg_mask', None)
+        if mask is None or not mask.any():
+            return
+
+        self._voi_mask_3d = mask.astype(np.uint8)
+
+        self._roi_masks_overlap.fill(0)
+        self._roi_masks_overlap[mask > 0, 0] = 255  # Red
+        self._roi_masks_overlap[mask > 0, 3] = 128  # Alpha
+
+        self._compute_voi_boxes()
+
+        if self._bmode_image_data is not None:
+            self._run_mc_button.setEnabled(True)
+
+        self._set_interp_loading(False)
+        self._refresh_frames()

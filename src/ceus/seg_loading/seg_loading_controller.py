@@ -147,11 +147,17 @@ class SegmentationLoadingController(BaseController):
         """
         Handle segmentation loaded without motion compensation.
 
-        The MC path uses motion_comp_completed instead and never fires this signal.
-        For the VOI/file-selection path (no MC), proceed directly to confirmation
-        since the user already reviewed the mask in DrawVOIWidget or chose a file.
+        For 3D images loaded from a file (e.g. NIfTI), show the VOI drawing widget
+        so the user can review the mask and optionally apply motion compensation.
+        For 2D images or when the widget is already shown (VOI drawn manually),
+        proceed directly to confirmation.
         """
-        self.view._emit_user_action('segmentation_confirmed', seg_data)
+        image_data = self.model.image_data
+        if image_data and getattr(image_data, 'spatial_dims', 2) == 3 \
+                and self.view._voi_drawing_widget is None:
+            self.view.show_voi_drawing_with_seg(seg_data)
+        else:
+            self.view._emit_user_action('segmentation_confirmed', seg_data)
 
     def _on_mc_started(self) -> None:
         """Show loading state while motion compensation runs."""
