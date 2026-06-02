@@ -166,32 +166,36 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # B-mode overlay data
         self._bmode_image_data = bmode_image_data
         self._bmode_pix_data = bmode_image_data.pixel_data if bmode_image_data else None
-        self._bmode_alpha = 0.5  # 0.0 = invisible, 1.0 = fully opaque
-        self._ax_sag_cor_bmode_artists = [None, None, None]
+        self._show_bmode: bool = False  # False = show CEUS, True = show B-mode
 
         # Enhancement parameters
         # self._clahe_clip_limit = 1.2
         # self._gamma = 1.5
         
-        self._p_low_percentile = 4.0
-        self._p_high_percentile = 98.0
-        
+        # All intensity thresholds are direct 0–255 values.
+        # p_low=0 p_high=255 means no clipping (original image).
+        self._bmode_p_low: float = 120.0
+        self._bmode_p_high: float = 240.0
+
+        self._ceus_p_high: float = 255.0
+
         self._n_ref_frames = 5
         self._noise_std_multiplier = 0.5
-        self._ceus_p_high_percentile = 100
-        
-        self._width_scale_axial = 1.0
+
+        self._width_scale_axial = 0.75
         self._width_scale_sagittal = 1.0
         self._width_scale_coronal = 1.0
         self._use_philips_ceus = False
-        
-        self._pix_data = image_data.pixel_data  # keep raw data untouched
-        self._ceus_p_low = self._compute_noise_floor(image_data)  # single scalar
 
-        # Cache for enhanced volume
-        # self._enhanced_cache = None
-        # self._enhanced_cache_frame = -1
-        
+        self._pix_data = image_data.pixel_data  # keep raw data untouched
+        self._ceus_p_low = self._compute_noise_floor(image_data)  # noise floor scalar (0–255); user-adjustable
+
+        # Per-frame 3D volume cache — avoids re-reading the same frame for each plane
+        self._current_vol_t: int = -1
+        self._current_vol = None
+        self._current_bmode_vol_t: int = -1
+        self._current_bmode_vol = None
+
         self._slice_cache: dict = {}
 
         # State collections
@@ -648,12 +652,20 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             
             return col_widget, slider, val_lbl
 
-        # Create the columns
+        # Create the columns  — all intensity sliders are 0–255 (stored ×10 for 0.1 precision).
+        # B-mode sliders
         p_low_col, self.p_low_slider, self.p_low_val_lbl = create_enh_column(
-            "P LOW", 1, 200, int(self._p_low_percentile * 10), self._on_p_low_changed
+            "B MIN", 0, 2550, int(self._bmode_p_low * 10), self._on_p_low_changed
         )
         p_high_col, self.p_high_slider, self.p_high_val_lbl = create_enh_column(
-            "P HIGH", 500, 999, int(self._p_high_percentile * 10), self._on_p_high_changed
+            "B MAX", 0, 2550, int(self._bmode_p_high * 10), self._on_p_high_changed
+        )
+        # CEUS sliders
+        ceus_low_col, self.ceus_low_slider, self.ceus_low_val_lbl = create_enh_column(
+            "CEUS MIN", 0, 2550, int(self._ceus_p_low * 10), self._on_ceus_p_low_changed
+        )
+        ceus_high_col, self.ceus_high_slider, self.ceus_high_val_lbl = create_enh_column(
+            "CEUS MAX", 0, 2550, int(self._ceus_p_high * 10), self._on_ceus_p_high_changed
         )
 
         width_ax_col, self.width_ax_slider, self.width_ax_val_lbl = create_enh_column(
@@ -665,11 +677,34 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         width_cor_col, self.width_cor_slider, self.width_cor_val_lbl = create_enh_column(
             "WIDTH (COR)", 1, 50, int(self._width_scale_coronal * 10), self._on_width_coronal_changed
         )
-        
-        row1_layout.addWidget(p_low_col)
-        row1_layout.addWidget(p_high_col)
-        
-        # Philips CEUS Toggle (Pseudocoloring) - now in row 1
+
+        # CEUS group — stacked vertically on the left
+        def make_group_frame(title: str) -> tuple:
+            frame = QFrame()
+            frame.setStyleSheet(
+                "QFrame { border: 1px solid rgba(255,255,255,40); border-radius: 6px; padding: 4px; }"
+            )
+            layout = QVBoxLayout(frame)
+            layout.setContentsMargins(6, 4, 6, 4)
+            layout.setSpacing(4)
+            hdr = QLabel(title)
+            hdr.setStyleSheet("font-size: 12px; color: #aaaaaa; font-weight: bold; border: none;")
+            hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(hdr)
+            return frame, layout
+
+        ceus_frame, ceus_layout = make_group_frame("CEUS")
+        ceus_layout.addWidget(ceus_low_col)
+        ceus_layout.addWidget(ceus_high_col)
+
+        bmode_frame, bmode_layout = make_group_frame("B-MODE")
+        bmode_layout.addWidget(p_low_col)
+        bmode_layout.addWidget(p_high_col)
+
+        row1_layout.addWidget(ceus_frame)
+        row1_layout.addWidget(bmode_frame)
+
+        # Philips CEUS Toggle (Pseudocoloring)
         self.philips_check = QCheckBox("Pseudocoloring")
         self.philips_check.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
         self.philips_check.setToolTip("Philips CEUS Style:\n"
@@ -687,15 +722,21 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         container_layout.addLayout(row1_layout)
         container_layout.addLayout(row2_layout)
 
-        # B-mode alpha slider (only shown when B-mode data is loaded)
+        # B-mode / CEUS toggle button (only shown when B-mode data is loaded)
         if self._bmode_pix_data is not None:
             row3_layout = QHBoxLayout()
             row3_layout.setSpacing(20)
-            bmode_alpha_col, self.bmode_alpha_slider, self.bmode_alpha_val_lbl = create_enh_column(
-                "B-MODE ALPHA", 0, 100, int(self._bmode_alpha * 100), self._on_bmode_alpha_changed
+            self.bmode_toggle_btn = QPushButton("Show B-mode")
+            self.bmode_toggle_btn.setCheckable(True)
+            self.bmode_toggle_btn.setChecked(False)
+            self.bmode_toggle_btn.setStyleSheet(
+                "QPushButton { color: white; font-size: 13px; font-weight: bold; "
+                "background: rgb(60, 60, 60); border-radius: 8px; padding: 5px 14px; }"
+                "QPushButton:checked { background: rgb(30, 120, 220); }"
             )
-            self.bmode_alpha_val_lbl.setText(f"{self._bmode_alpha:.2f}")
-            row3_layout.addWidget(bmode_alpha_col)
+            self.bmode_toggle_btn.toggled.connect(self._on_bmode_toggle)
+            row3_layout.addWidget(self.bmode_toggle_btn)
+            row3_layout.addStretch()
             container_layout.addLayout(row3_layout)
 
         # Add to the layout below the current slice slider
@@ -737,33 +778,48 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     def _on_philips_toggled(self, state: int) -> None:
         """Handle Philips CEUS pseudocolor toggle."""
         self._use_philips_ceus = state == Qt.CheckState.Checked.value
-        # Update colormap on all artists
-        new_cmap = philips_cmap if self._use_philips_ceus else 'gray'
-        for artist in self._ax_sag_cor_plane_artists:
-            if artist:
-                artist.set_cmap(new_cmap)
+        # Only apply colormap when CEUS is the active modality
+        if not self._show_bmode:
+            new_cmap = philips_cmap if self._use_philips_ceus else 'gray'
+            for artist in self._ax_sag_cor_plane_artists:
+                if artist:
+                    artist.set_cmap(new_cmap)
         self._refresh_frames()
 
-    def _on_bmode_alpha_changed(self, value: int) -> None:
-        """Handle B-mode overlay alpha change."""
-        self._bmode_alpha = value / 100.0
-        if hasattr(self, 'bmode_alpha_val_lbl'):
-            self.bmode_alpha_val_lbl.setText(f"{self._bmode_alpha:.2f}")
-        for artist in self._ax_sag_cor_bmode_artists:
+    def _on_bmode_toggle(self, checked: bool) -> None:
+        """Switch display between CEUS and B-mode."""
+        self._show_bmode = checked
+        if hasattr(self, 'bmode_toggle_btn'):
+            self.bmode_toggle_btn.setText("Show CEUS" if checked else "Show B-mode")
+        # Update colormap on all main artists to match the active modality
+        cmap = 'gray' if checked else (philips_cmap if self._use_philips_ceus else 'gray')
+        for artist in self._ax_sag_cor_plane_artists:
             if artist is not None:
-                artist.set_alpha(self._bmode_alpha)
-        self._refresh_frames()
+                artist.set_cmap(cmap)
+        self._invalidate_enhancement_cache()
+
+    def _on_ceus_p_low_changed(self, value: int) -> None:
+        self._ceus_p_low = value / 10.0
+        if hasattr(self, 'ceus_low_val_lbl'):
+            self.ceus_low_val_lbl.setText(f"{self._ceus_p_low:.1f}")
+        self._invalidate_enhancement_cache()
+
+    def _on_ceus_p_high_changed(self, value: int) -> None:
+        self._ceus_p_high = value / 10.0
+        if hasattr(self, 'ceus_high_val_lbl'):
+            self.ceus_high_val_lbl.setText(f"{self._ceus_p_high:.1f}")
+        self._invalidate_enhancement_cache()
 
     def _on_p_low_changed(self, value: int) -> None:
-        self._p_low_percentile = value / 10.0
+        self._bmode_p_low = value / 10.0
         if hasattr(self, 'p_low_val_lbl'):
-            self.p_low_val_lbl.setText(f"{self._p_low_percentile:.1f}")
+            self.p_low_val_lbl.setText(f"{self._bmode_p_low:.1f}")
         self._invalidate_enhancement_cache()
 
     def _on_p_high_changed(self, value: int) -> None:
-        self._p_high_percentile = value / 10.0
+        self._bmode_p_high = value / 10.0
         if hasattr(self, 'p_high_val_lbl'):
-            self.p_high_val_lbl.setText(f"{self._p_high_percentile:.1f}")
+            self.p_high_val_lbl.setText(f"{self._bmode_p_high:.1f}")
         self._invalidate_enhancement_cache()
 
     def _on_width_axial_changed(self, value: int) -> None:
@@ -837,6 +893,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         
     def _invalidate_enhancement_cache(self) -> None:
         self._slice_cache.clear()
+        self._current_vol_t = -1       # forces p_high recompute on next frame access
+        self._current_bmode_vol_t = -1
         self._refresh_frames()
 
     def _setup_matplotlib_canvases(self):
@@ -893,13 +951,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 current_cmap = philips_cmap if self._use_philips_ceus else 'gray'
                 artist = ax.imshow(slice_arr, cmap=current_cmap, aspect=float(aspect), zorder=1, animated=True)
 
-                # B-mode overlay layer (zorder=2, above CEUS, below masks)
-                if self._bmode_pix_data is not None:
-                    bmode_slice = self._get_bmode_plane_slice(plane_ix)
-                    bmode_artist = ax.imshow(bmode_slice, cmap='gray', aspect=float(aspect),
-                                             zorder=2, animated=True, alpha=self._bmode_alpha)
-                    self._ax_sag_cor_bmode_artists[plane_ix] = bmode_artist
-
                 v_line = ax.axvline(x=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 h_line = ax.axhline(y=0, color='yellow', lw=0.8, animated=True, zorder=11)
                 seg_mask = ax.imshow(mask_arr, zorder=8, aspect=float(aspect), animated=True)
@@ -917,6 +968,20 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             except Exception as e:
                 self.show_error(f"Error initializing plane display {plane_ix}: {e}")
 
+    def _get_frame_vol(self, t: int) -> np.ndarray:
+        """Return the (X,Y,Z) CEUS volume for frame t, cached across plane calls."""
+        if self._current_vol_t != t:
+            self._current_vol = np.asarray(self._pix_data[:, :, :, t])
+            self._current_vol_t = t
+        return self._current_vol
+
+    def _get_bmode_frame_vol(self, t: int) -> np.ndarray:
+        """Return the (X,Y,Z) B-mode volume for frame t, cached across plane calls."""
+        if self._current_bmode_vol_t != t:
+            self._current_bmode_vol = np.asarray(self._bmode_pix_data[:, :, :, t])
+            self._current_bmode_vol_t = t
+        return self._current_bmode_vol
+
     def _get_plane_slice(self, plane_ix: int, initializing=False):
         current_t = self._crosshair_xyzt[3]
         # Include the fixed-dimension index in the cache key
@@ -927,7 +992,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         if key not in self._slice_cache:
             idx = self._get_plane_indices(plane_ix)
-            raw = np.asarray(self._pix_data[:, :, :, current_t])
+            raw = self._get_frame_vol(current_t)
             arr = raw[tuple(list(idx[:3]))].astype(np.float32)
             if arr.ndim != 2:
                 arr = arr.squeeze()
@@ -949,7 +1014,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         if key not in self._slice_cache:
             idx = self._get_plane_indices(plane_ix)
-            raw = np.asarray(self._bmode_pix_data[:, :, :, current_t])
+            raw = self._get_bmode_frame_vol(current_t)
             arr = raw[tuple(list(idx[:3]))].astype(np.float32)
             if arr.ndim != 2:
                 arr = arr.squeeze()
@@ -960,27 +1025,20 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         return self._slice_cache[key]
     
     def _enhance_slice_ceus(self, arr: np.ndarray) -> np.ndarray:
-        """Inline enhance_ceus_noise_norm on a single 2D slice."""
-        nonzero = arr[arr != 0]
-        if nonzero.size == 0:
+        """Clip arr to [_ceus_p_low, _ceus_p_high] and stretch to 0–255.
+        Both values are direct intensity thresholds (0–255). p_low=0, p_high=255 → no change."""
+        if self._ceus_p_high <= self._ceus_p_low:
             return np.zeros_like(arr)
-        p_high = np.percentile(nonzero, self._ceus_p_high_percentile)
-        if p_high <= self._ceus_p_low:
-            return np.zeros_like(arr)
-        clipped = np.clip(arr, self._ceus_p_low, p_high)
-        return ((clipped - self._ceus_p_low) / (p_high - self._ceus_p_low) * 255)
+        clipped = np.clip(arr, self._ceus_p_low, self._ceus_p_high)
+        return (clipped - self._ceus_p_low) / (self._ceus_p_high - self._ceus_p_low) * 255
 
     def _enhance_slice_bmode(self, arr: np.ndarray) -> np.ndarray:
-        """Inline enhance_bmode_noise on a single 2D slice."""
-        nonzero = arr[arr != 0]
-        if nonzero.size == 0:
+        """Clip arr to [_bmode_p_low, _bmode_p_high] and stretch to 0–255.
+        Both values are direct intensity thresholds (0–255). p_low=0, p_high=255 → no change."""
+        if self._bmode_p_high <= self._bmode_p_low:
             return np.zeros_like(arr)
-        p_low = np.percentile(nonzero, self._p_low_percentile)
-        p_high = np.percentile(nonzero, self._p_high_percentile)
-        if p_high <= p_low:
-            return np.zeros_like(arr)
-        clipped = np.clip(arr, p_low, p_high)
-        return ((clipped - p_low) / (p_high - p_low) * 255)
+        clipped = np.clip(arr, self._bmode_p_low, self._bmode_p_high)
+        return (clipped - self._bmode_p_low) / (self._bmode_p_high - self._bmode_p_low) * 255
             
     def _get_mask_slice(self, plane_ix: int):
         """Return RGBA numpy slice for the mask of the given plane index."""
@@ -1016,14 +1074,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             # Always refresh slice when pending
             if self._ax_sag_cor_pending[plane_ix]:
                 try:
-                    slice_arr = self._get_plane_slice(plane_ix)
+                    if self._show_bmode and self._bmode_pix_data is not None:
+                        slice_arr = self._get_bmode_plane_slice(plane_ix)
+                    else:
+                        slice_arr = self._get_plane_slice(plane_ix)
                     self._ax_sag_cor_plane_artists[plane_ix].set_array(slice_arr)
-                    # Update B-mode overlay if present
-                    bmode_artist = self._ax_sag_cor_bmode_artists[plane_ix]
-                    if bmode_artist is not None:
-                        bmode_slice = self._get_bmode_plane_slice(plane_ix)
-                        if bmode_slice is not None:
-                            bmode_artist.set_array(bmode_slice)
                     self._update_crosshair_lines(plane_ix)
                 except Exception as e:
                     self.show_error(f"Plane {plane_ix} update error: {e}")
@@ -1039,8 +1094,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             scatter = self._ax_sag_cor_point_scatters[plane_ix]
             mask = self._ax_sag_cor_seg_masks[plane_ix]
             artists = [self._ax_sag_cor_plane_artists[plane_ix]]
-            bmode_artist = self._ax_sag_cor_bmode_artists[plane_ix]
-            if bmode_artist is not None: artists.append(bmode_artist)
             if v_line: artists.append(v_line)
             if h_line: artists.append(h_line)
             if roi_plot: artists.append(roi_plot[0])
@@ -1385,7 +1438,6 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     def _export_video(self, progress_signal=None) -> None:
         """Export postprocessed CEUS and B-mode with VOI border overlay as a 2x3 MP4."""
         import cv2
-        from engines.ceus.src.image_preprocessing.options import get_im_preproc_funcs
 
         out_folder = self._ui.save_folder_input.text()
         out_name = Path(self._ui.save_name_input.text() or self._image_data.scan_name or "export").stem
@@ -1393,35 +1445,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             raise ValueError("Please select a valid output folder first.")
 
         out_path = str(Path(out_folder) / f"{out_name}_ceus.mp4")
-        funcs = get_im_preproc_funcs()
 
         cx, cy, cz = self._crosshair_xyzt[0], self._crosshair_xyzt[1], self._crosshair_xyzt[2]
 
         # --- Helpers ---
-
-        def _enhance_ceus_frame(raw_3d: np.ndarray) -> np.ndarray:
-            """Enhance a raw CEUS 3D frame, returns H x W x Z uint8."""
-            temp_im = UltrasoundImage(self._image_data.scan_path)
-            temp_im.pixel_data = raw_3d.T[None].T.copy()
-            temp_im.pixdim = self._image_data.pixdim
-            temp_im.frame_rate = self._image_data.frame_rate
-            temp_im = funcs['enhance_ceus_noise_norm'](
-                temp_im, p_low=self._ceus_p_low, p_high_percentile=self._ceus_p_high_percentile
-            )
-            return temp_im.pixel_data[:, :, :, 0]
-
-        def _enhance_bmode_frame_3d(raw_3d: np.ndarray) -> np.ndarray:
-            """Enhance a raw B-mode 3D frame, returns H x W x Z uint8."""
-            temp_im = UltrasoundImage(self._image_data.scan_path)
-            temp_im.pixel_data = raw_3d.T[None].T.copy()
-            temp_im.pixdim = self._image_data.pixdim
-            temp_im.frame_rate = self._image_data.frame_rate
-            temp_im = funcs['enhance_bmode_noise'](
-                temp_im,
-                p_low_percentile=self._p_low_percentile,
-                p_high_percentile=self._p_high_percentile,
-            )
-            return temp_im.pixel_data[:, :, :, 0]
 
         def _voi_border_2d(mask_2d: np.ndarray) -> np.ndarray:
             binary = (mask_2d > 0).astype(np.uint8) * 255
@@ -1444,29 +1471,22 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             new_w = max(1, int(w * scale))
             return cv2.resize(img_bgr, (new_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-        def _build_row(enhanced_3d: np.ndarray, target_h: int) -> np.ndarray:
-            """Build a 1x3 BGR row (axial | sagittal | coronal) from an enhanced 3D volume."""
-            # Axial: slice at z=cz, transpose to match widget orientation
-            ax_gray  = enhanced_3d[:, :, cz].T
-            ax_mask  = self._roi_masks_overlap[:, :, cz, 0].T
-            # Sagittal: slice at x=cx → (y_len, z_len)
-            sag_gray = enhanced_3d[cx, :, :]
-            sag_mask = self._roi_masks_overlap[cx, :, :, 0]
-            # Coronal: slice at y=cy → (x_len, z_len)
-            cor_gray = enhanced_3d[:, cy, :]
-            cor_mask = self._roi_masks_overlap[:, cy, :, 0]
-
+        def _build_row(raw_3d: np.ndarray, enhance_fn, target_h: int) -> np.ndarray:
+            """Extract the 3 planes from raw_3d, enhance via enhance_fn, add VOI border."""
+            slices_masks = [
+                (raw_3d[:, :, cz].T,  self._roi_masks_overlap[:, :, cz, 0].T),   # axial
+                (raw_3d[cx, :, :],    self._roi_masks_overlap[cx, :, :, 0]),       # sagittal
+                (raw_3d[:, cy, :],    self._roi_masks_overlap[:, cy, :, 0]),       # coronal
+            ]
             panels = []
-            for gray, mask in [(ax_gray, ax_mask), (sag_gray, sag_mask), (cor_gray, cor_mask)]:
-                border = _voi_border_2d(mask)
-                bgr    = _apply_border(gray, border)
+            for raw_2d, mask in slices_masks:
+                enhanced = enhance_fn(raw_2d.astype(np.float32)).astype(np.uint8)
+                border   = _voi_border_2d(mask)
+                bgr      = _apply_border(enhanced, border)
                 panels.append(_resize_to_height(bgr, target_h))
-
             return np.concatenate(panels, axis=1)
 
         def _add_label(row: np.ndarray, text: str) -> np.ndarray:
-            """Add a text label in the top-left corner of a row."""
-            import cv2
             labeled = row.copy()
             cv2.putText(labeled, text, (10, 24),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 2, cv2.LINE_AA)
@@ -1474,50 +1494,35 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         # --- Determine composite dimensions from first frame ---
 
-        sample_ceus_raw   = np.array(self._pix_data[:, :, :, 0])
-        sample_ceus_enh   = _enhance_ceus_frame(sample_ceus_raw)
-        target_h          = sample_ceus_enh[:, :, cz].T.shape[0]
-
+        target_h = self._get_frame_vol(0)[:, :, cz].T.shape[0]
         has_bmode = self._bmode_pix_data is not None
-        if has_bmode:
-            sample_bmode_raw = np.array(self._bmode_pix_data[:, :, :, 0])
-            sample_bmode_enh = _enhance_bmode_frame_3d(sample_bmode_raw)
-            bmode_target_h   = sample_bmode_enh[:, :, cz].T.shape[0]
-        
-        ceus_row_sample  = _build_row(sample_ceus_enh, target_h)
-        comp_w           = ceus_row_sample.shape[1]
+        bmode_target_h = self._get_bmode_frame_vol(0)[:, :, cz].T.shape[0] if has_bmode else 0
 
-        if has_bmode:
-            bmode_row_sample = _build_row(sample_bmode_enh, bmode_target_h)
-            # Match bmode row width to ceus row width
-            if bmode_row_sample.shape[1] != comp_w:
-                bmode_row_sample = cv2.resize(bmode_row_sample, (comp_w, bmode_target_h))
-            comp_h = ceus_row_sample.shape[0] + bmode_row_sample.shape[0]
-        else:
-            comp_h = ceus_row_sample.shape[0]
+        sample_ceus_row = _build_row(self._get_frame_vol(0), self._enhance_slice_ceus, target_h)
+        comp_w = sample_ceus_row.shape[1]
+        comp_h = target_h + (bmode_target_h if has_bmode else 0)
 
-        fps     = max(1, int(round(1.0 / self._image_data.frame_rate))) if self._image_data.frame_rate else 10
-        fourcc  = cv2.VideoWriter_fourcc(*'mp4v')
-        writer  = cv2.VideoWriter(out_path, fourcc, fps, (comp_w, comp_h))
+        fps    = max(1, int(round(1.0 / self._image_data.frame_rate))) if self._image_data.frame_rate else 10
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(out_path, fourcc, fps, (comp_w, comp_h))
 
         # --- Write frames ---
         try:
+            bmode_t_max = self._bmode_pix_data.shape[3] - 1 if has_bmode else 0
             for t in range(self._num_slices):
-                # CEUS row
-                ceus_raw  = np.array(self._pix_data[:, :, :, t])
-                ceus_enh  = _enhance_ceus_frame(ceus_raw)
-                ceus_row  = _add_label(_build_row(ceus_enh, target_h), "CEUS")
+                ceus_row = _add_label(
+                    _build_row(self._get_frame_vol(t), self._enhance_slice_ceus, target_h),
+                    "CEUS"
+                )
 
                 if has_bmode:
-                    # B-mode: clamp t to available frames
-                    bmode_t   = min(t, self._bmode_pix_data.shape[3] - 1)
-                    bmode_raw = np.array(self._bmode_pix_data[:, :, :, bmode_t])
-                    bmode_enh = _enhance_bmode_frame_3d(bmode_raw)
-                    bmode_row = _build_row(bmode_enh, bmode_target_h)
-                    # Match width before stacking
+                    bmode_row = _add_label(
+                        _build_row(self._get_bmode_frame_vol(min(t, bmode_t_max)),
+                                   self._enhance_slice_bmode, bmode_target_h),
+                        "B-mode"
+                    )
                     if bmode_row.shape[1] != comp_w:
                         bmode_row = cv2.resize(bmode_row, (comp_w, bmode_target_h))
-                    bmode_row = _add_label(bmode_row, "B-mode")
                     composite = np.concatenate([ceus_row, bmode_row], axis=0)
                 else:
                     composite = ceus_row
