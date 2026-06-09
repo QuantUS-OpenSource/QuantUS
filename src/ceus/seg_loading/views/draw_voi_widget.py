@@ -1436,7 +1436,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._save_worker.start()
     
     def _export_video(self, progress_signal=None) -> None:
-        """Export postprocessed CEUS and B-mode with VOI border overlay as a 2x3 MP4."""
+        """Export postprocessed CEUS and (optionally) B-mode as separate MP4s, each with VOI border."""
         import cv2
 
         out_folder = self._ui.save_folder_input.text()
@@ -1444,13 +1444,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if not Path(out_folder).is_dir():
             raise ValueError("Please select a valid output folder first.")
 
-        out_path = str(Path(out_folder) / f"{out_name}_ceus.mp4")
-
         cx, cy, cz = self._crosshair_xyzt[0], self._crosshair_xyzt[1], self._crosshair_xyzt[2]
 
-        # --- Helpers ---
-
-        def _voi_border_2d(mask_2d: np.ndarray) -> np.ndarray:
+        # --- Helpers (unchanged) ---
+        def _voi_border_2d(mask_2d):
             binary = (mask_2d > 0).astype(np.uint8) * 255
             if not binary.any():
                 return np.zeros_like(binary)
@@ -1458,12 +1455,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
             return cv2.dilate(edges, kernel, iterations=1)
 
-        def _apply_border(gray_2d: np.ndarray, border_2d: np.ndarray) -> np.ndarray:
+        def _apply_border(gray_2d, border_2d):
             bgr = cv2.cvtColor(gray_2d, cv2.COLOR_GRAY2BGR)
             bgr[border_2d > 0] = [0, 0, 255]
             return bgr
 
-        def _resize_to_height(img_bgr: np.ndarray, target_h: int) -> np.ndarray:
+        def _resize_to_height(img_bgr, target_h):
             h, w = img_bgr.shape[:2]
             if h == 0 or w == 0:
                 return np.zeros((target_h, target_h, 3), dtype=np.uint8)
@@ -1471,69 +1468,64 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             new_w = max(1, int(w * scale))
             return cv2.resize(img_bgr, (new_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-        def _build_row(raw_3d: np.ndarray, enhance_fn, target_h: int) -> np.ndarray:
-            """Extract the 3 planes from raw_3d, enhance via enhance_fn, add VOI border."""
+        def _build_row(raw_3d, enhance_fn, target_h):
             slices_masks = [
-                (raw_3d[:, :, cz].T,  self._roi_masks_overlap[:, :, cz, 0].T),   # axial
-                (raw_3d[cx, :, :],    self._roi_masks_overlap[cx, :, :, 0]),       # sagittal
-                (raw_3d[:, cy, :],    self._roi_masks_overlap[:, cy, :, 0]),       # coronal
+                (raw_3d[:, :, cz].T,  self._roi_masks_overlap[:, :, cz, 0].T),
+                (raw_3d[cx, :, :],    self._roi_masks_overlap[cx, :, :, 0]),
+                (raw_3d[:, cy, :],    self._roi_masks_overlap[:, cy, :, 0]),
             ]
             panels = []
             for raw_2d, mask in slices_masks:
                 enhanced = enhance_fn(raw_2d.astype(np.float32)).astype(np.uint8)
-                border   = _voi_border_2d(mask)
-                bgr      = _apply_border(enhanced, border)
+                border = _voi_border_2d(mask)
+                bgr = _apply_border(enhanced, border)
                 panels.append(_resize_to_height(bgr, target_h))
             return np.concatenate(panels, axis=1)
 
-        def _add_label(row: np.ndarray, text: str) -> np.ndarray:
+        def _add_label(row, text):
             labeled = row.copy()
             cv2.putText(labeled, text, (10, 24),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 2, cv2.LINE_AA)
             return labeled
 
-        # --- Determine composite dimensions from first frame ---
-
-        target_h = self._get_frame_vol(0)[:, :, cz].T.shape[0]
-        has_bmode = self._bmode_pix_data is not None
-        bmode_target_h = self._get_bmode_frame_vol(0)[:, :, cz].T.shape[0] if has_bmode else 0
-
-        sample_ceus_row = _build_row(self._get_frame_vol(0), self._enhance_slice_ceus, target_h)
-        comp_w = sample_ceus_row.shape[1]
-        comp_h = target_h + (bmode_target_h if has_bmode else 0)
-
-        fps    = max(1, int(round(1.0 / self._image_data.frame_rate))) if self._image_data.frame_rate else 10
+        fr = self._image_data.frame_rate
+        fps = 30 #max(1, int(round(fr))) if fr else 10
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(out_path, fourcc, fps, (comp_w, comp_h))
 
-        # --- Write frames ---
-        try:
-            bmode_t_max = self._bmode_pix_data.shape[3] - 1 if has_bmode else 0
-            for t in range(self._num_slices):
-                ceus_row = _add_label(
-                    _build_row(self._get_frame_vol(t), self._enhance_slice_ceus, target_h),
-                    "CEUS"
-                )
+        # Generic single-modality export
+        def _export_one(get_vol, enhance_fn, n_frames, label, suffix):
+            sample = _build_row(get_vol(0), enhance_fn, get_vol(0)[:, :, cz].T.shape[0])
+            h = get_vol(0)[:, :, cz].T.shape[0]
+            w = sample.shape[1]
+            # even dims required by mp4v
+            w -= w % 2
+            h -= h % 2
 
-                if has_bmode:
-                    bmode_row = _add_label(
-                        _build_row(self._get_bmode_frame_vol(min(t, bmode_t_max)),
-                                   self._enhance_slice_bmode, bmode_target_h),
-                        "B-mode"
-                    )
-                    if bmode_row.shape[1] != comp_w:
-                        bmode_row = cv2.resize(bmode_row, (comp_w, bmode_target_h))
-                    composite = np.concatenate([ceus_row, bmode_row], axis=0)
-                else:
-                    composite = ceus_row
+            path = str(Path(out_folder) / f"{out_name}_{suffix}.mp4")
+            writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
+            if not writer.isOpened():
+                raise RuntimeError(f"VideoWriter failed to open: {path}")
+            try:
+                for t in range(n_frames):
+                    row = _add_label(_build_row(get_vol(t), enhance_fn, h), label)
+                    if row.shape[1] != w or row.shape[0] != h:
+                        row = cv2.resize(row, (w, h))
+                    writer.write(row)
+                    if progress_signal:
+                        progress_signal.emit(int((t + 1) / n_frames * 100))
+            finally:
+                writer.release()
 
-                writer.write(composite)
+        # CEUS
+        _export_one(self._get_frame_vol, self._enhance_slice_ceus,
+                    self._num_slices, "CEUS", "ceus")
 
-                if progress_signal:
-                    progress_signal.emit(int((t + 1) / self._num_slices * 100))
-        finally:
-            writer.release()
-
+        # B-mode (only if present)
+        if self._bmode_pix_data is not None:
+            bmode_n = self._bmode_pix_data.shape[3]
+            _export_one(self._get_bmode_frame_vol, self._enhance_slice_bmode,
+                        bmode_n, "B-mode", "bmode")
+        
     def _on_save_voi_finished(self, msg):
         self._ui.saving_voi_label.hide()
         self._show_widget_lists([self._save_voi_widgets])
