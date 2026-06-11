@@ -145,10 +145,12 @@ class SegmentationLoadingController(BaseController):
 
     def _on_segmentation_loaded(self, seg_data: CeusSeg) -> None:
         """
-        Handle segmentation loaded without motion compensation.
+        Handle a freshly loaded segmentation.
 
         For 3D images loaded from a file (e.g. NIfTI), show the VOI drawing widget
         so the user can review the mask and optionally apply motion compensation.
+        If the file already contains motion compensation data, jump straight into
+        MC review mode so the user can review the motion-compensated mask.
         For 2D images or when the widget is already shown (VOI drawn manually),
         proceed directly to confirmation.
         """
@@ -156,6 +158,13 @@ class SegmentationLoadingController(BaseController):
         if image_data and getattr(image_data, 'spatial_dims', 2) == 3 \
                 and self.view._voi_drawing_widget is None:
             self.view.show_voi_drawing_with_seg(seg_data)
+            # If the loaded file already contains motion compensation data,
+            # immediately enter MC review mode so the user can inspect the
+            # motion-compensated mask instead of just the static reference VOI.
+            if getattr(seg_data, 'use_mc', False) and getattr(seg_data, 'motion_compensation', None) is not None:
+                self.view.show_motion_comp_review(
+                    seg_data, self.model.image_data, self.model.bmode_image_data
+                )
         else:
             self.view._emit_user_action('segmentation_confirmed', seg_data)
 

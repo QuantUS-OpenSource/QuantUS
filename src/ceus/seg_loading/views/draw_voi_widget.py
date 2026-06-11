@@ -374,7 +374,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Configure stretch factors for file selection
         self._ui.full_screen_layout.setStretchFactor(self._ui.side_bar_layout, 1)
         self._ui.full_screen_layout.setStretchFactor(self._ui.voi_layout, 10)
-        
+
+        # Tighten the controls panel so the MC review buttons stay reachable
+        # without growing the window taller than the screen.
+        self._ui.verticalLayout_5.setSpacing(4)
+        self._ui.verticalLayout_5.setContentsMargins(10, 0, 10, 8)
+
         # Store widgets that should be displayed during different states
         self._drawing_widgets = [
             self._ui.draw_roi_button,
@@ -430,8 +435,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             "border: 1px solid rgba(255,255,255,50); border-radius: 8px; }"
         )
         mc_layout = QVBoxLayout(mc_frame)
-        mc_layout.setContentsMargins(10, 8, 10, 8)
-        mc_layout.setSpacing(6)
+        mc_layout.setContentsMargins(8, 6, 8, 6)
+        mc_layout.setSpacing(4)
 
         # Title row
         title_lbl = QLabel("Motion Compensation")
@@ -521,8 +526,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             "border: 1px solid rgba(255,255,255,50); border-radius: 8px; }"
         )
         review_layout = QVBoxLayout(review_frame)
-        review_layout.setContentsMargins(10, 8, 10, 8)
-        review_layout.setSpacing(6)
+        review_layout.setContentsMargins(8, 6, 8, 6)
+        review_layout.setSpacing(4)
 
         title_lbl = QLabel("MC Review")
         title_lbl.setStyleSheet("color: white; font-size: 14px; font-weight: bold; border: none;")
@@ -532,15 +537,15 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._mc_review_ref_lbl.setStyleSheet("color: #3af; font-size: 12px; border: none;")
         review_layout.addWidget(self._mc_review_ref_lbl)
 
-        info_lbl = QLabel("Navigate to a bad frame,\nthen click Re-anchor to redraw.")
-        info_lbl.setStyleSheet("color: #aaa; font-size: 12px; border: none;")
+        info_lbl = QLabel("Navigate to a bad frame, then Re-anchor.")
+        info_lbl.setStyleSheet("color: #aaa; font-size: 11px; border: none;")
         info_lbl.setWordWrap(True)
         review_layout.addWidget(info_lbl)
 
         self._mc_reanchor_btn = QPushButton("Re-anchor at this frame")
         self._mc_reanchor_btn.setStyleSheet(
             "QPushButton { color: white; font-size: 13px; font-weight: bold; "
-            "background: rgb(130, 0, 160); border-radius: 10px; padding: 5px 8px; }"
+            "background: rgb(130, 0, 160); border-radius: 10px; padding: 4px 8px; }"
         )
         self._mc_reanchor_btn.clicked.connect(self._on_mc_reanchor_clicked)
         review_layout.addWidget(self._mc_reanchor_btn)
@@ -571,7 +576,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._mc_rerun_btn = QPushButton("Re-run MC")
         self._mc_rerun_btn.setStyleSheet(
             "QPushButton { color: white; font-size: 13px; font-weight: bold; "
-            "background: rgb(160, 90, 0); border-radius: 10px; padding: 5px 8px; }"
+            "background: rgb(160, 90, 0); border-radius: 10px; padding: 4px 8px; }"
             "QPushButton:disabled { background: rgb(80,80,80); color: #888; }"
         )
         self._mc_rerun_btn.clicked.connect(self._on_mc_rerun_clicked)
@@ -580,7 +585,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._mc_accept_btn = QPushButton("Accept & Proceed")
         self._mc_accept_btn.setStyleSheet(
             "QPushButton { color: white; font-size: 13px; font-weight: bold; "
-            "background: rgb(0, 140, 60); border-radius: 10px; padding: 5px 8px; }"
+            "background: rgb(0, 140, 60); border-radius: 10px; padding: 4px 8px; }"
             "QPushButton:disabled { background: rgb(80,80,80); color: #888; }"
         )
         self._mc_accept_btn.clicked.connect(self.mc_accepted.emit)
@@ -589,7 +594,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._mc_save_voi_btn = QPushButton("Save VOI (.nii.gz)")
         self._mc_save_voi_btn.setStyleSheet(
             "QPushButton { color: white; font-size: 13px; font-weight: bold; "
-            "background: rgb(30, 80, 160); border-radius: 10px; padding: 5px 8px; }"
+            "background: rgb(30, 80, 160); border-radius: 10px; padding: 4px 8px; }"
             "QPushButton:disabled { background: rgb(80,80,80); color: #888; }"
         )
         self._mc_save_voi_btn.clicked.connect(self._on_mc_save_voi_clicked)
@@ -608,8 +613,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         
         # Main vertical layout to stack rows
         container_layout = QVBoxLayout(enh_group)
-        container_layout.setContentsMargins(0, 10, 0, 10)
-        container_layout.setSpacing(15)
+        container_layout.setContentsMargins(0, 4, 0, 4)
+        container_layout.setSpacing(6)
 
         # Rows for horizontal grouping
         row1_layout = QHBoxLayout()
@@ -682,11 +687,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         def make_group_frame(title: str) -> tuple:
             frame = QFrame()
             frame.setStyleSheet(
-                "QFrame { border: 1px solid rgba(255,255,255,40); border-radius: 6px; padding: 4px; }"
+                "QFrame { border: 1px solid rgba(255,255,255,40); border-radius: 6px; padding: 2px; }"
             )
             layout = QVBoxLayout(frame)
-            layout.setContentsMargins(6, 4, 6, 4)
-            layout.setSpacing(4)
+            layout.setContentsMargins(6, 2, 6, 2)
+            layout.setSpacing(2)
             hdr = QLabel(title)
             hdr.setStyleSheet("font-size: 12px; color: #aaaaaa; font-weight: bold; border: none;")
             hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2128,5 +2133,9 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if self._bmode_image_data is not None:
             self._run_mc_button.setEnabled(True)
 
+        # Mask is already final (loaded from file), so the drawing controls
+        # (draw ROI, undo, interpolate, etc.) are not needed and just take up
+        # vertical space in the sidebar.
+        self._hide_widget_lists([self._drawing_widgets])
         self._set_interp_loading(False)
         self._refresh_frames()
