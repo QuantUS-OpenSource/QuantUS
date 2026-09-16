@@ -72,7 +72,7 @@ class SegmentationLoadingController(BaseController):
             self.model.run_mc_from_mask(
                 action_data['voi_mask'],
                 action_data['reference_frame'],
-                action_data['search_margin_ratio'],
+                action_data['search_margin'],
                 action_data.get('padding', 5),
             )
         elif action_name == 'rerun_motion_compensation':

@@ -225,12 +225,12 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._emit_user_action('segmentation_confirmed', seg_data)
 
     def _on_run_mc_requested(self, voi_mask, reference_frame: int,
-                             search_margin_ratio: float, padding: int) -> None:
+                             search_margin, padding: int) -> None:
         """Forward the Run MC request from DrawVOIWidget to the controller."""
         self._emit_user_action('run_mc_from_mask', {
             'voi_mask': voi_mask,
             'reference_frame': reference_frame,
-            'search_margin_ratio': search_margin_ratio,
+            'search_margin': tuple(search_margin),
             'padding': padding,
         })
 

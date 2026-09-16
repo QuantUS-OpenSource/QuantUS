@@ -22,7 +22,7 @@ from scipy.ndimage import shift as ndimage_shift
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QSlider, QDoubleSpinBox, QFrame, QSizePolicy,
+    QSlider, QDoubleSpinBox, QSpinBox, QFrame, QSizePolicy,
 )
 
 from ...mvc.base_view import BaseViewMixin
@@ -191,22 +191,28 @@ class MotionCompReviewWidget(QWidget, BaseViewMixin):
         rerun_title.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
         left.addWidget(rerun_title)
 
-        margin_row = QHBoxLayout()
-        margin_lbl = QLabel("Search margin:")
+        margin_lbl = QLabel("Search margin (voxels):")
         margin_lbl.setStyleSheet("color: #ccc; font-size: 13px;")
-        self._margin_spinbox = QDoubleSpinBox()
-        self._margin_spinbox.setRange(0.005, 0.5)
-        self._margin_spinbox.setSingleStep(0.005)
-        self._margin_spinbox.setDecimals(3)
-        self._margin_spinbox.setValue(0.02)
-        self._margin_spinbox.setStyleSheet(
-            "QDoubleSpinBox { background: #333; color: white; "
-            "border-radius: 4px; font-size: 13px; }"
-        )
-        self._margin_spinbox.setMaximumWidth(95)
-        margin_row.addWidget(margin_lbl)
-        margin_row.addStretch()
-        margin_row.addWidget(self._margin_spinbox)
+        left.addWidget(margin_lbl)
+        margin_row = QHBoxLayout()
+        self._margin_spinboxes = []
+        for axis, value in zip(("X", "Y", "Z"), (5, 5, 5)):
+            box = QSpinBox()
+            box.setRange(1, 100)
+            box.setSingleStep(1)
+            box.setValue(value)
+            box.setPrefix(f"{axis} ")
+            box.setSuffix(" vox")
+            box.setStyleSheet(
+                "QSpinBox { background: #333; color: white; "
+                "border-radius: 4px; font-size: 13px; }"
+            )
+            box.setMaximumWidth(95)
+            box.setToolTip(
+                f"Largest per-frame {axis} displacement the tracker can find, in voxels"
+            )
+            self._margin_spinboxes.append(box)
+            margin_row.addWidget(box)
         left.addLayout(margin_row)
 
         self._rerun_btn = _build_button("Re-run MC (full)", "rgb(160, 90, 0)")
@@ -337,6 +343,10 @@ class MotionCompReviewWidget(QWidget, BaseViewMixin):
         shifted = ndimage_shift(
             self._voi_mask.astype(float), shift=[tx, ty, tz], order=0, cval=0
         )
+        # Exclude VOI that has left the imaged sector (see compute_sector_mask)
+        sector = getattr(self._mc, 'sector_mask', None)
+        if sector is not None:
+            shifted = np.where(sector, shifted, 0)
         mask_slice = shifted[:, :, z_mid]  # (X, Y)
         self._shifted_slice_cache[frame] = mask_slice
         return mask_slice
@@ -435,7 +445,7 @@ class MotionCompReviewWidget(QWidget, BaseViewMixin):
         """Re-run MC on the full video with the current kwargs."""
         kwargs = {
             'reference_frame': self._reference_frame,
-            'search_margin_ratio': self._margin_spinbox.value(),
+            'search_margin': tuple(b.value() for b in self._margin_spinboxes),
             'padding': 5,
         }
         self.rerun_mc_requested.emit(kwargs)

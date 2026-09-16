@@ -6,7 +6,7 @@ replacing the individual models for each component.
 """
 
 import os
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .mvc.base_model import BaseModel
@@ -17,6 +17,7 @@ from engines.ceus.src.entrypoints import scan_loading_step, seg_loading_step,seg
 from engines.ceus.src.data_objs.image import UltrasoundImage
 from engines.ceus.src.data_objs.seg import CeusSeg
 from engines.ceus.src.time_series_analysis.curves.framework import CurvesAnalysis
+from engines.ceus.src.seg_preprocessing.motion_compensation_3d import compute_sector_mask
 
 
 class ScanLoadingWorker(QThread):
@@ -724,6 +725,15 @@ class ApplicationModel(BaseModel):
             print(f"Pixel Dimensions: {getattr(seg_data, 'pixdim', 'Unknown')}")
             print(f"-----------------------------------------------\n")
 
+        # A NIfTI carries the tracking result but not the imaged sector, so
+        # rebuild it from the B-mode; without it the restored VOI would not be
+        # clipped and would cover sector padding.
+        mc = getattr(seg_data, 'motion_compensation', None)
+        if (mc is not None and getattr(mc, 'sector_mask', None) is None
+                and self._bmode_image_data is not None):
+            mc.sector_mask = compute_sector_mask(
+                self._bmode_image_data.pixel_data, mc.reference_frame)
+
         if self._pending_mc_kwargs and self._bmode_image_data is not None:
             mc_kwargs = self._pending_mc_kwargs
             self._pending_mc_kwargs = None
@@ -745,7 +755,7 @@ class ApplicationModel(BaseModel):
         self.motion_comp_completed.emit(seg_data)
 
     def run_mc_from_mask(self, voi_mask, reference_frame: int,
-                         search_margin_ratio: float, padding: int = 5) -> None:
+                         search_margin: Tuple[int, int, int], padding: int = 5) -> None:
         """
         Run motion compensation directly from an in-memory VOI mask (no file I/O).
 
@@ -763,7 +773,7 @@ class ApplicationModel(BaseModel):
 
         mc_kwargs = {
             'reference_frame': reference_frame,
-            'search_margin_ratio': search_margin_ratio,
+            'search_margin': tuple(search_margin),
             'padding': padding,
         }
 

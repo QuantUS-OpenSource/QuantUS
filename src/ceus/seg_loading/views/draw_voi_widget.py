@@ -140,6 +140,30 @@ class ExportVideoWorker(QThread):
             self.error_msg.emit(str(e))
 
 
+def _build_margin_spinboxes(style: str, width: int, default=(5, 5, 5)):
+    """Three per-axis search-margin spinboxes, in voxels.
+
+    Z is independent of X/Y on purpose: out-of-plane motion is usually the
+    largest, and the elevational axis is usually the shortest, so a single
+    shared value starves exactly the axis that needs the most room.
+    """
+    boxes = []
+    for axis, value in zip(("X", "Y", "Z"), default):
+        box = QSpinBox()
+        box.setRange(1, 100)
+        box.setSingleStep(1)
+        box.setValue(value)
+        box.setPrefix(f"{axis} ")
+        box.setSuffix(" vox")
+        box.setStyleSheet(style)
+        box.setMaximumWidth(width)
+        box.setToolTip(
+            f"Largest per-frame {axis} displacement the tracker can find, in voxels"
+        )
+        boxes.append(box)
+    return boxes
+
+
 class DrawVOIWidget(QWidget, BaseViewMixin):
     """
     Widget for drawing volume of interest (VOI). VOI is drawn and then saved externally before proceeding.
@@ -150,7 +174,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
     
     # Signals for communicating with controller
     file_selected = pyqtSignal(dict)      # {'seg_path': str, 'seg_type': str}
-    run_mc_requested = pyqtSignal(object, int, float, int)  # voi_mask, reference_frame, search_margin_ratio, padding
+    run_mc_requested = pyqtSignal(object, int, object, int)  # voi_mask, reference_frame, search_margin (x,y,z), padding
     mc_accepted = pyqtSignal()
     rerun_mc_requested = pyqtSignal(dict)  # kwargs for full re-run
     back_requested = pyqtSignal()
@@ -475,23 +499,17 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         padding_row.addWidget(self._mc_padding_spinbox)
         mc_layout.addLayout(padding_row)
 
-        # Search margin
-        margin_row = QHBoxLayout()
-        margin_label = QLabel("Search margin:")
+        # Search margin (per axis, in voxels)
+        margin_label = QLabel("Search margin (voxels):")
         margin_label.setStyleSheet("color: #aaa; font-size: 13px; border: none;")
-        self._mc_margin_spinbox = QDoubleSpinBox()
-        self._mc_margin_spinbox.setRange(0.005, 0.5)
-        self._mc_margin_spinbox.setSingleStep(0.005)
-        self._mc_margin_spinbox.setDecimals(3)
-        self._mc_margin_spinbox.setValue(0.02)
-        self._mc_margin_spinbox.setStyleSheet(
-            "QDoubleSpinBox { background: #333; color: white; border-radius: 4px; "
-            "font-size: 13px; border: none; }"
+        mc_layout.addWidget(margin_label)
+        margin_row = QHBoxLayout()
+        self._mc_margin_spinboxes = _build_margin_spinboxes(
+            "QSpinBox { background: #333; color: white; border-radius: 4px; "
+            "font-size: 13px; border: none; }", 90
         )
-        self._mc_margin_spinbox.setMaximumWidth(90)
-        margin_row.addWidget(margin_label)
-        margin_row.addStretch()
-        margin_row.addWidget(self._mc_margin_spinbox)
+        for box in self._mc_margin_spinboxes:
+            margin_row.addWidget(box)
         mc_layout.addLayout(margin_row)
 
         # Run MC button
@@ -509,7 +527,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         # Live bbox/search region update when parameters change
         self._mc_padding_spinbox.valueChanged.connect(self._on_bbox_params_changed)
-        self._mc_margin_spinbox.valueChanged.connect(self._on_bbox_params_changed)
+        for box in self._mc_margin_spinboxes:
+            box.valueChanged.connect(self._on_bbox_params_changed)
 
         # Insert into verticalLayout_5 right after horizontalLayout_2 (restart+save buttons)
         # horizontalLayout_2 is at index 3 in verticalLayout_5
@@ -555,22 +574,16 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         sep.setStyleSheet("color: #555; max-height: 1px; border: none;")
         review_layout.addWidget(sep)
 
-        margin_row = QHBoxLayout()
-        margin_lbl = QLabel("Search margin:")
+        margin_lbl = QLabel("Search margin (voxels):")
         margin_lbl.setStyleSheet("color: #aaa; font-size: 12px; border: none;")
-        self._mc_review_margin_spinbox = QDoubleSpinBox()
-        self._mc_review_margin_spinbox.setRange(0.005, 0.5)
-        self._mc_review_margin_spinbox.setSingleStep(0.005)
-        self._mc_review_margin_spinbox.setDecimals(3)
-        self._mc_review_margin_spinbox.setValue(0.02)
-        self._mc_review_margin_spinbox.setStyleSheet(
-            "QDoubleSpinBox { background: #333; color: white; border-radius: 4px; "
-            "font-size: 12px; border: none; }"
+        review_layout.addWidget(margin_lbl)
+        margin_row = QHBoxLayout()
+        self._mc_review_margin_spinboxes = _build_margin_spinboxes(
+            "QSpinBox { background: #333; color: white; border-radius: 4px; "
+            "font-size: 12px; border: none; }", 85
         )
-        self._mc_review_margin_spinbox.setMaximumWidth(85)
-        margin_row.addWidget(margin_lbl)
-        margin_row.addStretch()
-        margin_row.addWidget(self._mc_review_margin_spinbox)
+        for box in self._mc_review_margin_spinboxes:
+            margin_row.addWidget(box)
         review_layout.addLayout(margin_row)
 
         self._mc_rerun_btn = QPushButton("Re-run MC")
@@ -1640,7 +1653,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self.run_mc_requested.emit(
             voi_mask,
             self._reference_frame,
-            self._mc_margin_spinbox.value(),
+            tuple(b.value() for b in self._mc_margin_spinboxes),
             self._mc_padding_spinbox.value(),
         )
 
@@ -1659,11 +1672,8 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._voi_bbox = None
             self._voi_search_bbox = None
             return
-        margin_ratio = self._mc_margin_spinbox.value()
-        sx = max(1, int(margin_ratio * self._x_len))
-        sy = max(1, int(margin_ratio * self._y_len))
-        sz = max(1, int(margin_ratio * self._z_len))
-        self._voi_search_bbox = self._voi_bbox.expand((sx, sy, sz))
+        margin = tuple(b.value() for b in self._mc_margin_spinboxes)
+        self._voi_search_bbox = self._voi_bbox.expand(margin)
 
     def _draw_bbox_border(self, bbox: BoundingBox3D, color: list, cx: int, cy: int, cz: int) -> None:
         """Draw a 3D bounding box border into _roi_masks_overlap at the current crosshair."""
@@ -1731,7 +1741,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if frame not in self._mc_shifted_mask_cache:
             tx, ty, tz = (int(round(v)) for v in mc.get_translation(frame))
             if tx == 0 and ty == 0 and tz == 0:
-                shifted_mask = voi_mask
+                shifted_mask = voi_mask.copy()
             else:
                 X, Y, Z = voi_mask.shape
                 shifted_mask = np.zeros_like(voi_mask)
@@ -1742,6 +1752,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
                 yd = slice(max(0, ty), min(Y, Y + ty))
                 zd = slice(max(0, tz), min(Z, Z + tz))
                 shifted_mask[xd, yd, zd] = voi_mask[xs, ys, zs]
+            # Drop VOI pushed outside the imaged sector; it covers padding, not
+            # tissue, and showing it overstates what is actually being measured.
+            sector = getattr(mc, 'sector_mask', None)
+            if sector is not None:
+                shifted_mask = np.where(sector, shifted_mask, 0)
             self._mc_shifted_mask_cache[frame] = shifted_mask
         shifted_mask = self._mc_shifted_mask_cache[frame]
 
@@ -1801,9 +1816,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         mc = getattr(seg_data, 'motion_compensation', None)
         ref_frame = mc.reference_frame if mc is not None else 0
         self._mc_review_ref_lbl.setText(f"Reference frame: {ref_frame}")
-        self._mc_review_margin_spinbox.setValue(
-            self._mc_margin_spinbox.value()  # carry over the margin used for the run
-        )
+        # carry over the margin used for the run
+        for review_box, run_box in zip(self._mc_review_margin_spinboxes,
+                                       self._mc_margin_spinboxes):
+            review_box.setValue(run_box.value())
 
         self._hide_widget_lists([self._voi_decision_widgets])
         self._show_widget_lists([self._mc_review_widgets])
@@ -1849,7 +1865,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         ref_frame = mc.reference_frame if mc is not None else self._reference_frame
         kwargs = {
             'reference_frame': ref_frame,
-            'search_margin_ratio': self._mc_review_margin_spinbox.value(),
+            'search_margin': tuple(b.value() for b in self._mc_review_margin_spinboxes),
             'padding': 5,
         }
         self._mc_rerun_btn.setEnabled(False)
