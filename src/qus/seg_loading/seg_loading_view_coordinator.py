@@ -46,6 +46,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
     def __init__(self, image_data: UltrasoundRfImage, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._image_data = image_data
+        self.controller = None 
         
         # Widget instances
         self._seg_type_widget: Optional[SegTypeSelectionWidget] = None
@@ -192,6 +193,10 @@ class SegLoadingViewCoordinator(QStackedWidget):
         """Show the ROI drawing widget for manual ROI creation."""        
         # Create ROI drawing widget with brightness value
         self._roi_drawing_widget = RoiDrawingWidget(self._image_data, frame, self._frame_brightness)
+        
+        # Pass controller reference for DICOM loading via model
+        if hasattr(self, 'controller') and self.controller:
+            self._roi_drawing_widget._parent_controller = self.controller
         
         # Connect signals
         self._roi_drawing_widget.seg_file_selected.connect(self._on_file_selected)

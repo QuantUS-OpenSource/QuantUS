@@ -24,16 +24,17 @@ from ..ui.visualization_preview_2d_ui import Ui_visualization_preview_2d
 class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
     """Widget for displaying 2D visualization previews."""
     # Signals for communicating with controller
+    export_requested = pyqtSignal()
     close_requested = pyqtSignal()
     back_requested = pyqtSignal()
 
-    def __init__(self, image_data: UltrasoundRfImage, parent: Optional[QWidget] = None):
+    def __init__(self, image_data: UltrasoundRfImage, numerical_data: Dict[str, float], parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
         self._ui = Ui_visualization_preview_2d()
         self._image_data = image_data
         self._visualization_folder: Optional[Path] = None
-
+        self.numerical_data = numerical_data
         # Setup UI
         self._setup_ui()
         self._connect_signals()
@@ -81,6 +82,7 @@ class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
         """Connect signals."""
         self._ui.back_button.clicked.connect(self._on_back_clicked)
         self._ui.visualization_dropdown.currentTextChanged.connect(self._on_dropdown_changed)
+        self._ui.export_numerical_data_button.clicked.connect(self._on_export_clicked)
 
     def _on_dropdown_changed(self, text: str) -> None:
         """Handle dropdown selection change."""
@@ -91,6 +93,32 @@ class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
             self._matplotlib_canvas.draw()
             return
         
+        items = list(self.numerical_data.items())
+        max_key_length = max(len(k) for k, _ in items)
+        max_value_length = max(len(f"{v:.4e}") for _, v in items)
+
+        lines = []
+        left_col = items[::2]
+        right_col = items[1::2]
+        for i in range(len(left_col)):
+            lk, lv = left_col[i]
+            lv_str = f"{lv:.4e}".rjust(max_value_length)
+
+            if i < len(right_col):
+                rk, rv = right_col[i]
+                rv_str = f"{rv:.4e}".rjust(max_value_length)
+                line = (
+                    f"{lk:<{max_key_length}} {lv_str}    "
+                    f"{rk:<{max_key_length}} {rv_str}"
+                )
+            else:
+                line = f"{lk:<{max_key_length}} {lv_str}"
+
+            lines.append(line)
+
+        summary_text = "\n".join(lines)
+        self._ui.summary_label.setText(summary_text)
+  
         if text.endswith("_paramap"):
             legend_path = self._visualization_folder / f"{text[:-len('_paramap')]}_legend.png"
             legend_im = plt.imread(legend_path)
@@ -114,3 +142,7 @@ class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
     def _on_back_clicked(self) -> None:
         """Handle back button click."""
         self.back_requested.emit()
+
+    def _on_export_clicked(self) -> None:
+        """Handle export button click."""
+        self.export_requested.emit()

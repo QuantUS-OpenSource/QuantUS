@@ -6,7 +6,7 @@ with the controller and model, using a modular stacked widget approach.
 """
 
 from typing import Dict, List, Optional, Any
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSignal
 from .ui.export_loading_ui import Ui_exportLoading
 from .views.export_config_widget import ExportConfigWidget
@@ -95,6 +95,7 @@ class ExportLoadingViewCoordinator(QWidget):
     
     def update_views(self):
         """Update all views with current data."""
+  
         # Highlight the current section in the sidebar
         self._highlight_sidebar()
         
@@ -119,6 +120,7 @@ class ExportLoadingViewCoordinator(QWidget):
                     viz_funcs = self.controller._viz_controller.get_selected_visualization_functions()
                     recommended = self.controller._recommend_export_functions(viz_funcs)
                     self._export_functions_widget.set_recommended_functions(recommended)
+                    self.controller.set_export_functions(recommended)
                 except Exception:
                     self._export_functions_widget.set_recommended_functions([])
                 
@@ -179,19 +181,15 @@ class ExportLoadingViewCoordinator(QWidget):
                     else:
                         self._ui.phantom_path_input.setText("No phantom loaded")
                         
-                    print(f"DEBUG: Updated export sidebar - scan_name: {getattr(image_data, 'scan_name', 'None')}, phantom_name: {getattr(image_data, 'phantom_name', 'None')}")
                 else:
                     # Fallback to default values if no analysis data
                     self._ui.image_path_input.setText("Sample filename")
                     self._ui.phantom_path_input.setText("Sample filename")
-                    print("DEBUG: No analysis data available for export sidebar")
             else:
                 # Fallback to default values if no visualization controller
                 self._ui.image_path_input.setText("Sample filename")
                 self._ui.phantom_path_input.setText("Sample filename")
-                print("DEBUG: No visualization controller available for export sidebar")
         except Exception as e:
-            print(f"DEBUG: Error updating image/phantom names in export sidebar: {e}")
             # Fallback to default values on error
             self._ui.image_path_input.setText("Sample filename")
             self._ui.phantom_path_input.setText("Sample filename")
@@ -200,14 +198,22 @@ class ExportLoadingViewCoordinator(QWidget):
         """Handle execute export button click."""
         try:
             export_obj = self.controller.perform_export()
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Data export completed successfully.\n\nSaved to:\n{self.controller.get_export_path()}"
+            )
             self.user_action.emit('export_loading_completed', {
                 'export_type': self.controller.get_selected_export_type(),
                 'export_functions': self.controller.get_selected_export_functions(),
                 'export_path': self.controller.get_export_path(),
             })
         except Exception as e:
-            # Simple stderr feedback; can be replaced with QMessageBox
-            print(f"ERROR: Export failed: {e}")
+            QMessageBox.critical(
+                self,
+                "Export Failed",
+                f"Export failed:\n{str(e)}"
+            )
             self.export_failed.emit(str(e))
     
 

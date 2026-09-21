@@ -94,16 +94,22 @@ class ExportLoadingController(QObject):
             self._view_coordinator.update_views()
 
     def set_export_functions(self, export_funcs: List[str]) -> None:
+        if export_funcs == self._selected_export_funcs:
+            return
         self._selected_export_funcs = export_funcs
         if self._view_coordinator:
             self._view_coordinator.update_views()
 
     def set_export_kwargs(self, kwargs: Dict[str, Any]) -> None:
+        if kwargs == self._export_kwargs:
+            return
         self._export_kwargs = kwargs
         if self._view_coordinator:
             self._view_coordinator.update_views()
 
     def set_export_path(self, path: str) -> None:
+        if path == self._export_path:
+            return
         self._export_path = path
         if self._view_coordinator:
             self._view_coordinator.update_views()
