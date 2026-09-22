@@ -15,6 +15,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import scipy.interpolate as interpolate
 from scipy.spatial import ConvexHull
 from scipy.ndimage import shift as ndimage_shift
+from skimage.restoration import denoise_nl_means, estimate_sigma
 from PyQt6.QtWidgets import (QWidget, QLabel, QHBoxLayout, QSizePolicy, QFileDialog, QSlider,
                               QVBoxLayout, QFrame, QCheckBox, QDoubleSpinBox, QSpinBox)
 from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
@@ -205,6 +206,10 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
 
         self._n_ref_frames = 5
         self._noise_std_multiplier = 0.5
+
+        # Non-local means denoise (display only); off by default as it is costly per slice
+        self._denoise_on: bool = False
+        self._denoise_strength: float = 1.2  # h multiplier: higher = stronger smoothing
 
         self._width_scale_axial = 0.75
         self._width_scale_sagittal = 1.0
@@ -733,6 +738,27 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self.philips_check.stateChanged.connect(self._on_philips_toggled)
         row1_layout.addWidget(self.philips_check)
 
+        # Non-local means denoise group — toggle plus strength slider
+        denoise_str_col, self.denoise_str_slider, self.denoise_str_val_lbl = create_enh_column(
+            "STRENGTH", 1, 30, int(self._denoise_strength * 10), self._on_denoise_strength_changed
+        )
+        self.denoise_check = QCheckBox("Non local means denoise")
+        self.denoise_check.setStyleSheet(
+            "color: white; font-weight: bold; font-size: 14px; border: none;"
+        )
+        self.denoise_check.setToolTip("Non-local means denoising of each displayed plane.\n"
+                                      "Applies to the axial, sagittal and coronal slices only\n"
+                                      "(not the full 3D volume), before intensity clipping.")
+        self.denoise_check.setChecked(self._denoise_on)
+        self.denoise_check.stateChanged.connect(self._on_denoise_toggled)
+        denoise_str_col.setEnabled(self._denoise_on)
+        self._denoise_str_col = denoise_str_col
+
+        denoise_frame, denoise_layout = make_group_frame("DENOISE")
+        denoise_layout.addWidget(self.denoise_check)
+        denoise_layout.addWidget(denoise_str_col)
+        row1_layout.addWidget(denoise_frame)
+
         row2_layout.addWidget(width_ax_col)
         row2_layout.addWidget(width_sag_col)
         row2_layout.addWidget(width_cor_col)
@@ -839,6 +865,19 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         if hasattr(self, 'p_high_val_lbl'):
             self.p_high_val_lbl.setText(f"{self._bmode_p_high:.1f}")
         self._invalidate_enhancement_cache()
+
+    def _on_denoise_toggled(self, state: int) -> None:
+        """Enable or disable non-local means denoising of the displayed planes."""
+        self._denoise_on = state == Qt.CheckState.Checked.value
+        self._denoise_str_col.setEnabled(self._denoise_on)
+        self._invalidate_enhancement_cache()
+
+    def _on_denoise_strength_changed(self, value: int) -> None:
+        self._denoise_strength = value / 10.0
+        if hasattr(self, 'denoise_str_val_lbl'):
+            self.denoise_str_val_lbl.setText(f"{self._denoise_strength:.1f}")
+        if self._denoise_on:
+            self._invalidate_enhancement_cache()
 
     def _on_width_axial_changed(self, value: int) -> None:
         """Handle axial width scale change."""
@@ -1042,19 +1081,31 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self._slice_cache[key] = arr.astype(np.uint8)
         return self._slice_cache[key]
     
+    def _denoise_slice(self, arr: np.ndarray) -> np.ndarray:
+        """Non-local means denoise a single 2D plane slice, for display only."""
+        sigma_est = float(np.mean(estimate_sigma(arr)))
+        return denoise_nl_means(
+            arr, h=self._denoise_strength * sigma_est, sigma=sigma_est,
+            patch_size=5, patch_distance=9, fast_mode=True,
+        )
+
     def _enhance_slice_ceus(self, arr: np.ndarray) -> np.ndarray:
-        """Clip arr to [_ceus_p_low, _ceus_p_high] and stretch to 0–255.
-        Both values are direct intensity thresholds (0–255). p_low=0, p_high=255 → no change."""
+        """Optionally denoise arr, then clip to [_ceus_p_low, _ceus_p_high] and stretch to 0–255.
+        Both values are direct intensity thresholds (0–255). p_low=0, p_high=255 → no clipping."""
         if self._ceus_p_high <= self._ceus_p_low:
             return np.zeros_like(arr)
+        if self._denoise_on:
+            arr = self._denoise_slice(arr)
         clipped = np.clip(arr, self._ceus_p_low, self._ceus_p_high)
         return (clipped - self._ceus_p_low) / (self._ceus_p_high - self._ceus_p_low) * 255
 
     def _enhance_slice_bmode(self, arr: np.ndarray) -> np.ndarray:
-        """Clip arr to [_bmode_p_low, _bmode_p_high] and stretch to 0–255.
-        Both values are direct intensity thresholds (0–255). p_low=0, p_high=255 → no change."""
+        """Optionally denoise arr, then clip to [_bmode_p_low, _bmode_p_high] and stretch to 0–255.
+        Both values are direct intensity thresholds (0–255). p_low=0, p_high=255 → no clipping."""
         if self._bmode_p_high <= self._bmode_p_low:
             return np.zeros_like(arr)
+        if self._denoise_on:
+            arr = self._denoise_slice(arr)
         clipped = np.clip(arr, self._bmode_p_low, self._bmode_p_high)
         return (clipped - self._bmode_p_low) / (self._bmode_p_high - self._bmode_p_low) * 255
             
