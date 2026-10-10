@@ -16,8 +16,8 @@ from src.qus.config_loading.config_loading_controller import ConfigLoadingContro
 from src.qus.analysis_loading.analysis_loading_controller import AnalysisLoadingController
 from src.qus.visualization_loading.visualization_loading_controller import VisualizationLoadingController
 from src.qus.export_loading.export_loading_controller import ExportLoadingController
-from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from quantus.analysis.paramap.framework import ParamapAnalysis
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 
 
 class ApplicationController(QObject):
@@ -658,3 +658,4 @@ def run_application():
         import traceback
         traceback.print_exc()
         return 1
+

@@ -61,3 +61,4 @@ class BaseModel(QObject):
             error_message: Description of the error
         """
         self.error_occurred.emit(error_message)
+

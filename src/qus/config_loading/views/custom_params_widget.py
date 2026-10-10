@@ -11,7 +11,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.config_loading.ui.custom_params_ui import Ui_customParams
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg
 
 
 class CustomParamsWidget(QWidget, BaseViewMixin):
@@ -347,3 +347,4 @@ class CustomParamsWidget(QWidget, BaseViewMixin):
             
         if not (0 <= params['window_thresh'] <= 1):
             raise ValueError("Window threshold must be between 0 and 1") 
+

@@ -66,3 +66,4 @@ class ScanTypeSelectionWidget(QWidget, BaseViewMixin):
         """
         self._ui.scan_type_dropdown.clear()
         self._ui.scan_type_dropdown.addItems(loader_names)
+

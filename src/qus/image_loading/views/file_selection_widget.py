@@ -254,3 +254,4 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         """Clear any displayed error message."""
         self._ui.select_image_error_msg.clear()
         self._ui.select_image_error_msg.hide()
+

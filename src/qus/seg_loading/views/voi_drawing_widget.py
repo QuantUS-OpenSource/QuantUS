@@ -18,7 +18,7 @@ from PyQt6.QtCore import QEvent, pyqtSignal, Qt, QThread
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.voi_drawing_ui import Ui_voi_drawer
-from engines.qus.quantus.data_objs import UltrasoundRfImage
+from quantus.data_objs import UltrasoundRfImage
 from .spline import calculateSpline3D, calculateSpline
 
 def _smooth_3d_mask(mask: np.ndarray) -> np.ndarray:
@@ -1001,3 +1001,4 @@ class VoiDrawingWidget(QWidget, BaseViewMixin):
         
         self._set_interp_loading(False)
         self._refresh_frames()
+

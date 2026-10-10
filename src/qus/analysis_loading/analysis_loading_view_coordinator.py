@@ -13,8 +13,8 @@ from PyQt6.QtCore import pyqtSignal
 from src.qus.mvc.base_view import BaseViewMixin
 from .views.analysis_function_selection_widget import AnalysisFunctionSelectionWidget
 from .views.analysis_params_widget import AnalysisParamsWidget
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
-from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from quantus.analysis.paramap.framework import ParamapAnalysis
 
 
 class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
@@ -190,3 +190,4 @@ class AnalysisLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
             action_data: Data associated with the action
         """
         self.user_action.emit(action_name, action_data)
+

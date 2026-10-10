@@ -7,3 +7,4 @@ from .base_view import BaseViewMixin
 from .base_controller import BaseController
 
 __all__ = ['BaseModel', 'BaseViewMixin', 'BaseController']
+

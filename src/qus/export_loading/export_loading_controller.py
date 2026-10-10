@@ -53,7 +53,10 @@ class ExportLoadingController(QObject):
         try:
             viz_funcs = visualization_controller.get_selected_visualization_functions()
             self._selected_export_funcs = self._recommend_export_functions(viz_funcs)
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"EXPORT INIT ERROR: {e}")
+            traceback.print_exc()
             self._selected_export_funcs = []
 
     # ----------------------------- Query methods -----------------------------
@@ -138,15 +141,15 @@ class ExportLoadingController(QObject):
         if not self.validate_export_selection():
             raise ValueError("Invalid export selection")
 
-        viz_obj = None
+        viz_objs = None
         try:
-            viz_obj = self._viz_controller.get_last_visualization_obj()
+            viz_objs = self._viz_controller.get_last_visualization_objs()
         except Exception:
-            viz_obj = None
-        if viz_obj is None:
+            viz_objs = None
+        if viz_objs is None:
             # Attempt to regenerate via controller
             try:
-                viz_obj = self._viz_controller.execute_visualization()
+                viz_objs = self._viz_controller.execute_visualization()
             except Exception as e:
                 raise RuntimeError(f"Could not obtain visualization object for export: {e}")
 
@@ -164,15 +167,22 @@ class ExportLoadingController(QObject):
                                 self._export_kwargs['output_folder'] = str(Path(self._export_path).parent)
         except Exception:
             pass
+        
+        export_objs = []
 
-        export_obj = self._model.execute_data_export(
-            self._selected_export_type,
-            viz_obj,
-            self._export_path,
-            self._selected_export_funcs,
-            **self._export_kwargs,
-        )
-        return export_obj
+        for viz_obj in viz_objs.values():
+
+            export_obj = self._model.execute_data_export(
+                self._selected_export_type,
+                viz_obj,
+                self._export_path,
+                self._selected_export_funcs,
+                **self._export_kwargs,
+            )
+
+            export_objs.append(export_obj)
+
+        return export_objs
 
     # ----------------------------- Recommendations ---------------------------
     def _recommend_export_functions(self, visualization_funcs: list[str]) -> list[str]:
@@ -183,14 +193,16 @@ class ExportLoadingController(QObject):
         """
         # Get available export functions
         funcs_map = self.get_available_export_functions(self._selected_export_type or '')
-        
+        print(f"RECOMMEND: selected_type={self._selected_export_type}")
+        print(f"RECOMMEND: funcs_map={funcs_map}")
+        print(f"RECOMMEND: viz_funcs={visualization_funcs}")
         # Always include descr_vals if available
         recommended = ['descr_vals'] if 'descr_vals' in funcs_map else []
         
         # Add hscan_stats only if hscan visualization is present
         if 'plot_hscan_result' in (visualization_funcs or []) and 'hscan_stats' in funcs_map:
             recommended.append('hscan_stats')
-        
+        print(f"RECOMMEND: result={recommended}")
         return recommended
 
     # ----------------------------- View wiring --------------------------------
@@ -217,5 +229,6 @@ class ExportLoadingController(QObject):
 
     def _on_close_requested(self) -> None:
         self.close_requested.emit()
+
 
 

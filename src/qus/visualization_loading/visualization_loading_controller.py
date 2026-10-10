@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
-from engines.qus.quantus.data_objs.visualizations import ParamapDrawingBase
+from quantus.analysis.paramap.framework import ParamapAnalysis
+from quantus.data_objs.visualizations import ParamapDrawingBase
 from .visualization_loading_view_coordinator import VisualizationLoadingViewCoordinator
 
 
@@ -22,7 +22,7 @@ class VisualizationLoadingController(QObject):
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
     
-    def __init__(self, model, analysis_data: ParamapAnalysis, parent=None):
+    def __init__(self, model, analysis_data: Dict[str, ParamapAnalysis], parent=None):
         """Initialize the visualization loading controller.
         
         Args:
@@ -40,7 +40,7 @@ class VisualizationLoadingController(QObject):
         self._selected_visualization_funcs = []
         self._visualization_kwargs = {}
         self._visualization_folder: str = None
-        self._visualization_obj: Optional[ParamapDrawingBase] = None
+        self._visualization_objs: Dict[str, ParamapDrawingBase] = None
 
         # Setup available visualization options based on analysis results
         self._setup_visualization_options()
@@ -64,9 +64,9 @@ class VisualizationLoadingController(QObject):
         """Get selected visualization functions"""
         return self._selected_visualization_funcs
 
-    def get_last_visualization_obj(self):
+    def get_last_visualization_objs(self):
         """Get the visualization object"""
-        return self._visualization_obj
+        return self._visualization_objs
     
     def get_widget(self):
         """Get the main widget for this controller.
@@ -75,8 +75,9 @@ class VisualizationLoadingController(QObject):
             The view coordinator widget.
         """
         if self._view_coordinator is None:
-            self._view_coordinator = VisualizationLoadingViewCoordinator(self._analysis_data.image_data,
-                                                self._analysis_data.seg_data, self._analysis_data.config, self._analysis_data)
+            first_analysis = next(iter(self._analysis_data.values()))
+            self._view_coordinator = VisualizationLoadingViewCoordinator(first_analysis.image_data, first_analysis.seg_data, 
+                                                                         first_analysis.config, self._analysis_data)
             # Forward coordinator signals to application controller
             self._view_coordinator.user_action.connect(self._on_user_action)
             self._view_coordinator.back_requested.connect(self._on_back_requested)
@@ -121,13 +122,19 @@ class VisualizationLoadingController(QObject):
         self._visualization_kwargs['paramap_folder_path'] = self._visualization_folder
         self._visualization_kwargs['hide_all_visualizations'] = False # always output, even if just to internal folder
 
-        self._visualization_obj = self._model.execute_visualization(
-            self._selected_visualization_type,
-            self._analysis_data,
-            self._selected_visualization_funcs,
-            **self._visualization_kwargs
-        )
+        self._visualization_objs = {}
+
+        for analysis_type, analysis in self._analysis_data.items():
+            viz = self._model.execute_visualization(
+                self._selected_visualization_type,
+                analysis,
+                self._selected_visualization_funcs,
+                **self._visualization_kwargs
+            )
+
+            self._visualization_objs[analysis_type] = viz
         
         summary_data = self._model.get_numerical_summary()
 
         self._view_coordinator.show_visualization_previews(self._visualization_folder, summary_data)
+

@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QWidget, QFileDialog, QMessageBox, QTableWidgetItem,
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.config_loading.ui.config_file_selection_ui import Ui_configFileSelection
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg
 
 
 class ConfigFileSelectionWidget(QWidget, BaseViewMixin):
@@ -205,3 +205,4 @@ class ConfigFileSelectionWidget(QWidget, BaseViewMixin):
         self._ui.loading_options_table.setHorizontalHeaderLabels([])
         self._ui.loading_options_table.hide()
         self._ui.loading_options_label.hide()
+

@@ -98,3 +98,4 @@ class BaseController(QObject):
     def close_view(self) -> None:
         """Close the view."""
         self._view.close()
+

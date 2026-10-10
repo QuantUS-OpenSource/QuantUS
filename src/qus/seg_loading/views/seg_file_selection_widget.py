@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.seg_file_selection_ui import Ui_constructRoi
-from engines.qus.quantus.data_objs import UltrasoundRfImage
+from quantus.data_objs import UltrasoundRfImage
 
 
 class SegFileSelectionWidget(QWidget, BaseViewMixin):
@@ -235,3 +235,4 @@ class SegFileSelectionWidget(QWidget, BaseViewMixin):
         self._ui.loading_options_table.setHorizontalHeaderLabels([])
         self._ui.loading_options_table.hide()
         self._ui.loading_options_label.hide()
+

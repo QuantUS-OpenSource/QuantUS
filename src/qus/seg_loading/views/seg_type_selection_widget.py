@@ -8,7 +8,7 @@ from PyQt6.QtCore import pyqtSignal
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.seg_type_selection_ui import Ui_constructRoi
-from engines.qus.quantus.data_objs import UltrasoundRfImage
+from quantus.data_objs import UltrasoundRfImage
 
 
 class SegTypeSelectionWidget(QWidget, BaseViewMixin):
@@ -90,3 +90,4 @@ class SegTypeSelectionWidget(QWidget, BaseViewMixin):
     def _on_back_clicked(self) -> None:
         """Handle back button click."""
         self.back_requested.emit()
+

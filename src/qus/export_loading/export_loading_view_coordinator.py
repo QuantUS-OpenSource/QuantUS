@@ -121,7 +121,10 @@ class ExportLoadingViewCoordinator(QWidget):
                     recommended = self.controller._recommend_export_functions(viz_funcs)
                     self._export_functions_widget.set_recommended_functions(recommended)
                     self.controller.set_export_functions(recommended)
-                except Exception:
+                except Exception as e:
+                    import traceback
+                    print(f"EXPORT SETUP ERROR: {e}")
+                    traceback.print_exc()
                     self._export_functions_widget.set_recommended_functions([])
                 
                 # Set selected functions
@@ -129,7 +132,12 @@ class ExportLoadingViewCoordinator(QWidget):
                 self._export_functions_widget.set_selected_functions(selected_funcs)
         
         # Enable execute button based on validation
-        self._ui.execute_button.setEnabled(self.controller.validate_export_selection())
+        _valid = self.controller.validate_export_selection()
+        print(f"VALIDATE RESULT: {_valid}")
+        print(f"  export_type: {self.controller.get_selected_export_type()}")
+        print(f"  export_path: {self.controller.get_export_path()}")
+        print(f"  export_funcs: {self.controller.get_selected_export_functions()}")
+        self._ui.execute_button.setEnabled(_valid)
     
     def _highlight_sidebar(self):
         """Highlight the current section in the sidebar to match visualization menu."""
@@ -167,7 +175,8 @@ class ExportLoadingViewCoordinator(QWidget):
             if viz_controller and hasattr(viz_controller, '_analysis_data'):
                 analysis_data = viz_controller._analysis_data
                 if analysis_data and hasattr(analysis_data, 'image_data'):
-                    image_data = analysis_data.image_data
+                    analysis = next(iter(analysis_data.values()))
+                    image_data = analysis.image_data
                     
                     # Update image name
                     if hasattr(image_data, 'scan_name') and image_data.scan_name:
@@ -221,5 +230,6 @@ class ExportLoadingViewCoordinator(QWidget):
     def _on_back_clicked(self):
         """Handle back button click."""
         self.back_requested.emit()
+
 
 

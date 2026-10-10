@@ -12,7 +12,7 @@ from PyQt6.QtCore import pyqtSignal
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.roi_preview_ui import Ui_constructRoi
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg
 
 
 class RoiPreviewWidget(QWidget, BaseViewMixin):
@@ -151,3 +151,4 @@ class RoiPreviewWidget(QWidget, BaseViewMixin):
     def get_segmentation_data(self) -> BmodeSeg:
         """Get the current segmentation data."""
         return self._seg_data
+

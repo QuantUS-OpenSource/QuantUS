@@ -10,7 +10,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from src.qus.mvc.base_controller import BaseController
 from src.qus.config_loading.config_loading_view_coordinator import ConfigLoadingViewCoordinator
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 
 
 

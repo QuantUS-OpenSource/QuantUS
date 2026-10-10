@@ -15,7 +15,7 @@ from .views.config_type_selection_widget import ConfigTypeSelectionWidget
 from .views.config_file_selection_widget import ConfigFileSelectionWidget
 from .views.custom_params_widget import CustomParamsWidget
 from .views.config_preview_widget import ConfigPreviewWidget
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 
 
 class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):

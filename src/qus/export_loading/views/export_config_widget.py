@@ -138,3 +138,4 @@ class ExportConfigWidget(QWidget):
         """
         if self._path_edit:
             self._path_edit.setText(path)
+

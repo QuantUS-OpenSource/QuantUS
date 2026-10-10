@@ -13,7 +13,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.frame_selection_ui import Ui_constructRoi
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg
 
 
 class FrameSelectionWidget(QWidget, BaseViewMixin):
@@ -396,3 +396,4 @@ class FrameSelectionWidget(QWidget, BaseViewMixin):
     def _on_back_clicked(self) -> None:
         """Handle back button click."""
         self.back_requested.emit()
+

@@ -11,7 +11,7 @@ from PyQt6.QtCore import pyqtSignal
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.config_loading.ui.config_type_selection_ui import Ui_configTypeSelection
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg
 
 
 class ConfigTypeSelectionWidget(QWidget, BaseViewMixin):

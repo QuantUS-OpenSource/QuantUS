@@ -10,10 +10,10 @@ from typing import Dict, Any, List, Optional
 from PyQt6.QtWidgets import QWidget, QListWidgetItem, QFileDialog, QMessageBox
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
 
-from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
-from engines.qus.quantus.data_objs.analysis_config import RfAnalysisConfig
-from engines.qus.quantus.data_objs.image import UltrasoundRfImage
-from engines.qus.quantus.data_objs.seg import BmodeSeg
+from quantus.analysis.paramap.framework import ParamapAnalysis
+from quantus.data_objs.analysis_config import RfAnalysisConfig
+from quantus.data_objs.image import UltrasoundRfImage
+from quantus.data_objs.seg import BmodeSeg
 from ...mvc.base_view import BaseViewMixin
 from ..ui.visualization_function_selection_ui import Ui_visualizationFunctionSelection
 
@@ -131,3 +131,4 @@ class VisualizationFunctionSelectionWidget(QWidget, BaseViewMixin):
                 item.setCheckState(Qt.CheckState.Unchecked)
                 item.setSizeHint(QSize(0, 30))
                 self._ui.funcs_list.addItem(item)
+

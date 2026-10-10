@@ -15,7 +15,7 @@ from PyQt6.QtCore import pyqtSignal, Qt, QEvent
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.voi_preview_ui import Ui_confirm_voi
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg
 
 
 class VoiPreviewWidget(QWidget, BaseViewMixin):
@@ -473,3 +473,4 @@ class VoiPreviewWidget(QWidget, BaseViewMixin):
     def _resize_all_canvases(self):
         for lbl in self._ax_sag_cor_planes:
             self._resize_canvas_for(lbl)
+

@@ -22,3 +22,4 @@ __all__ = [
     'RoiPreviewWidget',
     'VoiPreviewWidget',
 ]
+

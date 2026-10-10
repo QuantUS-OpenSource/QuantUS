@@ -5,13 +5,13 @@ This widget allows users to select which analysis functions to run.
 It provides a dropdown menu for function selection and displays descriptions.
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
 from PyQt6.QtWidgets import QWidget, QMessageBox, QListWidgetItem
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.analysis_loading.ui.analysis_function_selection_ui import Ui_analysisFunctionSelection
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 
 
 class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
@@ -28,14 +28,14 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
     back_requested = pyqtSignal()
     
     def __init__(self, image_data: UltrasoundRfImage, seg_data: BmodeSeg, config_data: RfAnalysisConfig, 
-                 func_names: List[str], parent: Optional[QWidget] = None):
+                 funcs_per_type: Dict, parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
         self._ui = Ui_analysisFunctionSelection()
         self._image_data = image_data
         self._seg_data = seg_data
         self._config_data = config_data
-        self._func_names = func_names
+        self._funcs_per_type = funcs_per_type
 
         self._setup_ui()
         self._connect_signals()
@@ -56,15 +56,20 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
         self._ui.phantom_path_input.setText(self._image_data.phantom_name)
 
         # Update available functions
-        for func_name in self._func_names:
-            if func_name == "compute_power_spectra":
-                continue  # skip this function for now
-            formatted_name = func_name.replace('_', '-').title()
-            item = QListWidgetItem(formatted_name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            item.setSizeHint(QSize(0, 30))  # increase item height
-            self._ui.funcs_list.addItem(item)
+        for analysis_type in self._funcs_per_type:
+            type_item = QListWidgetItem(f"{analysis_type.upper()}:")
+            type_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            type_item.setSizeHint(QSize(0, 25))
+            self._ui.funcs_list.addItem(type_item)
+            for func_name in self._funcs_per_type[analysis_type]:
+                if func_name == "compute_power_spectra":
+                    continue  # skip this function for now
+                formatted_name = func_name.replace('_', '-').title()
+                item = QListWidgetItem(formatted_name)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setSizeHint(QSize(0, 30))  # increase item height
+                self._ui.funcs_list.addItem(item)
 
     def _connect_signals(self) -> None:
         """Connect UI signals to internal handlers."""
@@ -76,6 +81,8 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
         selected = []
         for i in range(self._ui.funcs_list.count()):
             item = self._ui.funcs_list.item(i)
+            if not item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                continue
             if item.checkState() == Qt.CheckState.Checked:
                 func_name = item.text().replace('-', '_').lower()
                 selected.append(func_name)
@@ -92,3 +99,4 @@ class AnalysisFunctionSelectionWidget(QWidget, BaseViewMixin):
     def _on_back_clicked(self) -> None:
         """Handle back button click."""
         self.back_requested.emit()
+

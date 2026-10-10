@@ -12,13 +12,13 @@ import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from src.qus.mvc.base_model import BaseModel
-from engines.qus.quantus.image_loading.utc_loaders.options import get_scan_loaders
-from engines.qus.quantus.seg_loading.options import get_seg_loaders
-from engines.qus.quantus.analysis_config.utc_config.options import get_config_loaders
-from engines.qus.quantus.analysis.options import get_analysis_types, get_required_kwargs
-from engines.qus.quantus.visualizations.options import get_visualization_types, get_compatible_funcs
-from engines.qus.quantus.data_export.options import get_data_export_types
-from engines.qus.quantus.entrypoints import (
+from quantus.image_loading.utc_loaders.options import get_scan_loaders
+from quantus.seg_loading.options import get_seg_loaders
+from quantus.analysis_config.utc_config.options import get_config_loaders
+from quantus.analysis.options import get_analysis_types, get_required_kwargs
+from quantus.visualizations.options import get_visualization_types, get_compatible_funcs
+from quantus.data_export.options import get_data_export_types
+from quantus.entrypoints import (
     scan_loading_step,
     seg_loading_step,
     analysis_config_step,
@@ -26,8 +26,8 @@ from engines.qus.quantus.entrypoints import (
     visualization_step,
     data_export_step,
 )
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
-from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from quantus.analysis.paramap.framework import ParamapAnalysis
 
 
 class ScanLoadingWorker(QThread):
@@ -1098,3 +1098,4 @@ class ApplicationModel(BaseModel):
             summary[f"Av. {method_name.upper()}"] = np.mean(np.array(method_arr))
 
         return summary
+

@@ -13,7 +13,7 @@ from PyQt6.QtCore import pyqtSignal, QObject
 from src.qus.mvc.base_view import BaseViewMixin
 from .views.scan_type_widget import ScanTypeSelectionWidget
 from .views.file_selection_widget import FileSelectionWidget
-from engines.qus.quantus.data_objs import UltrasoundRfImage
+from quantus.data_objs import UltrasoundRfImage
 
 
 class ImageLoadingViewCoordinator(QStackedWidget):
@@ -192,3 +192,4 @@ class ImageLoadingViewCoordinator(QStackedWidget):
             action_data: Data associated with the action
         """
         self.user_action.emit(action_name, action_data)
+

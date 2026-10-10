@@ -173,3 +173,4 @@ class ExportFunctionsWidget(QWidget):
                 item = self._function_list.item(i)
                 if item.text() in selected_functions:
                     item.setSelected(True)
+

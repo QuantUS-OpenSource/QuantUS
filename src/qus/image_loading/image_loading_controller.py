@@ -90,3 +90,4 @@ class ImageLoadingController(BaseController):
     def get_widget(self):
         """Get the view coordinator widget."""
         return self.view
+

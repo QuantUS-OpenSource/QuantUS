@@ -9,3 +9,4 @@ from .analysis_function_selection_widget import AnalysisFunctionSelectionWidget
 __all__ = [
     'AnalysisFunctionSelectionWidget', 
 ]
+

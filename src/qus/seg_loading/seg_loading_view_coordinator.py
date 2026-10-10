@@ -18,7 +18,7 @@ from .views.voi_drawing_widget import VoiDrawingWidget
 from .views.roi_preview_widget import RoiPreviewWidget
 from .views.voi_preview_widget import VoiPreviewWidget
 from .views.frame_selection_widget import FrameSelectionWidget
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg
 
 
 class SegLoadingViewCoordinator(QStackedWidget):
@@ -352,3 +352,4 @@ class SegLoadingViewCoordinator(QStackedWidget):
             action_data: Data associated with the action
         """
         self.user_action.emit(action_name, action_data)
+

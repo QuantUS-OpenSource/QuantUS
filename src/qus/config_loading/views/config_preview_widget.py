@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QWidget, QMessageBox, QFileDialog
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.config_loading.ui.config_preview_ui import Ui_configPreview
-from engines.qus.quantus.data_objs import RfAnalysisConfig, UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import RfAnalysisConfig, UltrasoundRfImage, BmodeSeg
 
 
 class ConfigPreviewWidget(QWidget, BaseViewMixin):

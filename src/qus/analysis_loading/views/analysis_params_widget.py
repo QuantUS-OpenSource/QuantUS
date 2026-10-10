@@ -13,7 +13,7 @@ from PyQt6.QtCore import pyqtSignal, Qt, QTimer
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.analysis_loading.ui.analysis_params_ui import Ui_analysisParams
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 
 
 class AnalysisParamsWidget(QWidget, BaseViewMixin):
@@ -370,3 +370,4 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
             widget.show()
         for widget in self._execution_widgets:
             widget.hide()
+

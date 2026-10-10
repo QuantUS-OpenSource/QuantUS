@@ -10,8 +10,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from src.qus.mvc.base_controller import BaseController
 from src.qus.analysis_loading.analysis_loading_view_coordinator import AnalysisLoadingViewCoordinator
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
-from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from quantus.analysis.paramap.framework import ParamapAnalysis
 
 
 class AnalysisLoadingController(BaseController):
@@ -41,8 +41,9 @@ class AnalysisLoadingController(BaseController):
         super().__init__(model, self._view_coordinator)
         
         # Current state
-        self._analysis_data: Optional[ParamapAnalysis] = None
+        self._analysis_data: dict[str, ParamapAnalysis] = {}
         self._selected_analysis_type: Optional[str] = None
+        self._function_to_type: dict = {}
         self._selected_functions: List[str] = []
         self._analysis_params: dict = {}
         self._analysis_running: bool = False
@@ -65,20 +66,13 @@ class AnalysisLoadingController(BaseController):
         """Setup available analysis types and functions in the view."""
         analysis_types, analysis_functions = self._model.get_analysis_types()
         
-        # Automatically select "Paramap" as the analysis type
-        paramap_type = "paramap"
-        if paramap_type in analysis_types:
-            self._selected_analysis_type = paramap_type
-            if self._model.set_analysis_type(paramap_type):
-                # Get available functions for Paramap analysis
-                available_functions = self._model.get_analysis_functions(
-                    paramap_type, self._image_data.spatial_dims)
-                # Skip analysis type selection and go directly to function selection
-                self._view_coordinator.show_function_selection(available_functions)
-            else:
-                self._view_coordinator.show_error("Failed to set Paramap analysis type")
-        else:
-            self._view_coordinator.show_error("Paramap analysis type not available")
+        self._function_to_type = {
+            func: analysis_type
+            for analysis_type, funcs in analysis_functions.items()
+            for func in funcs
+        }
+        
+        self._view_coordinator.show_function_selection(analysis_functions)
             
     def _on_user_action(self, action_name: str, action_data: Any) -> None:
         """
@@ -104,7 +98,9 @@ class AnalysisLoadingController(BaseController):
         Args:
             analysis_data: Completed analysis data
         """
-        self._analysis_data = analysis_data
+        analysis_type = type(analysis_data).__name__
+        self._analysis_data[analysis_type] = analysis_data
+        print("Analysis data keys:", self._analysis_data.keys())
         self._analysis_running = False
         
         # Disconnect signals to avoid multiple connections
@@ -117,10 +113,6 @@ class AnalysisLoadingController(BaseController):
         except (TypeError, RuntimeError):
             pass  # Signal was not connected
 
-        # Prevent duplicate emissions
-        if self._analysis_completion_emitted:
-            print("DEBUG: Analysis completion already emitted, skipping duplicate")
-            return
             
         # Store analysis data in model
         self._model.set_analysis_data(analysis_data)
@@ -128,7 +120,7 @@ class AnalysisLoadingController(BaseController):
         # Mark as emitted to prevent duplicates
         self._analysis_completion_emitted = True
 
-        self.user_action.emit("analysis_loading_completed", analysis_data)
+        self.user_action.emit("analysis_loading_completed", self._analysis_data)
     
     def _on_analysis_error(self, error_message: str) -> None:
         """
@@ -159,7 +151,20 @@ class AnalysisLoadingController(BaseController):
         """
         self._selected_functions = selected_func_names
         # Get required parameters for selected functions
-        required_params = self._model.get_required_params(self._selected_analysis_type, selected_func_names)
+        funcs_by_type = {}
+        for func in selected_func_names:
+            analysis_type = self._function_to_type.get(func)
+            if analysis_type is None:
+                continue
+
+            funcs_by_type.setdefault(analysis_type, []).append(func)
+
+        required_params = {}
+
+        for analysis_type, funcs in funcs_by_type.items():
+            params = self._model.get_required_params(analysis_type, funcs)
+            required_params.update(params)
+
         self._view_coordinator.show_params_configuration(required_params, selected_func_names)
             
     def _handle_analysis_execution(self, params: dict) -> None:
@@ -188,14 +193,20 @@ class AnalysisLoadingController(BaseController):
         # Start analysis using the model
         self._analysis_running = True
         self._analysis_completion_emitted = False  # Reset completion flag
-        self._model.run_analysis(
-            self._selected_analysis_type, 
-            self._image_data, 
-            self._config_data, 
-            self._seg_data, 
-            self._selected_functions, 
-            **self._analysis_params
-        )
+        funcs_by_type = {}
+        for func in self._selected_functions:
+            analysis_type = self._function_to_type.get(func)
+            funcs_by_type.setdefault(analysis_type, []).append(func)
+
+        for analysis_type, funcs in funcs_by_type.items():
+            self._model.run_analysis(
+                analysis_type,
+                self._image_data,
+                self._config_data,
+                self._seg_data,
+                funcs,
+                **self._analysis_params
+            )
         
         # Connect to model signals for this operation
         self._model.analysis_completed.connect(self._on_analysis_completed)
@@ -245,3 +256,4 @@ class AnalysisLoadingController(BaseController):
     def cleanup(self) -> None:
         """Clean up resources."""
         self.model.cleanup()
+

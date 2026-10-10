@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, 
 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.roi_drawing_ui import Ui_constructRoi
-from engines.qus.quantus.data_objs import UltrasoundRfImage
+from quantus.data_objs import UltrasoundRfImage
 
 
 class RoiDrawingWidget(QWidget, BaseViewMixin):
@@ -1092,3 +1092,4 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._ui.physical_depth_val.setText(f"{height_cm:.2f} cm")
         self._ui.pixel_width_val.setText(f"{width_px} px")
         self._ui.pixel_depth_val.setText(f"{height_px} px")
+

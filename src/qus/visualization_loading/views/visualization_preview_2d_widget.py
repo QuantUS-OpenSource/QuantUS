@@ -12,11 +12,11 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QMessageBox
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
 
-from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
-from engines.qus.quantus.data_objs.analysis_config import RfAnalysisConfig
-from engines.qus.quantus.data_objs.image import UltrasoundRfImage
-from engines.qus.quantus.data_objs.seg import BmodeSeg
-from engines.qus.quantus.data_objs.visualizations import ParamapDrawingBase
+from quantus.analysis.paramap.framework import ParamapAnalysis
+from quantus.data_objs.analysis_config import RfAnalysisConfig
+from quantus.data_objs.image import UltrasoundRfImage
+from quantus.data_objs.seg import BmodeSeg
+from quantus.data_objs.visualizations import ParamapDrawingBase
 from ...mvc.base_view import BaseViewMixin
 from ..ui.visualization_preview_2d_ui import Ui_visualization_preview_2d
 
@@ -146,3 +146,4 @@ class VisualizationPreview2DWidget(QWidget, BaseViewMixin):
     def _on_export_clicked(self) -> None:
         """Handle export button click."""
         self.export_requested.emit()
+

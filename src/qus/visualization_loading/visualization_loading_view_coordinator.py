@@ -9,10 +9,10 @@ from typing import Dict, List, Optional, Any
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QPushButton
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
-from engines.qus.quantus.data_objs.analysis_config import RfAnalysisConfig
-from engines.qus.quantus.data_objs.image import UltrasoundRfImage
-from engines.qus.quantus.data_objs.seg import BmodeSeg
+from quantus.analysis.paramap.framework import ParamapAnalysis
+from quantus.data_objs.analysis_config import RfAnalysisConfig
+from quantus.data_objs.image import UltrasoundRfImage
+from quantus.data_objs.seg import BmodeSeg
 from ..mvc.base_view import BaseViewMixin
 from .views.visualization_function_selection_widget import VisualizationFunctionSelectionWidget
 from .views.visualization_preview_2d_widget import VisualizationPreview2DWidget
@@ -171,3 +171,4 @@ class VisualizationLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
             action_data: Data associated with the action
         """
         self.user_action.emit(action_name, action_data)
+

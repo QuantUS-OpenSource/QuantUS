@@ -95,3 +95,4 @@ class DicomLoader:
         
         print(f"DICOM cropped: {image.shape} -> {cropped_image.shape} (removed {crop_top} from top, {crop_bottom} from bottom)")
         return cropped_image
+

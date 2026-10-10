@@ -94,3 +94,4 @@ class BaseViewMixin:
         """Show loading indicators in the view."""
         # This can be overridden by subclasses to show loading indicators
         self._is_loading = True
+

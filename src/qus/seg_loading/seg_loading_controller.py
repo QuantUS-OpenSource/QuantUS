@@ -7,7 +7,7 @@ from typing import Any, Optional
 from src.qus.mvc.base_controller import BaseController
 from ..application_model import ApplicationModel
 from .seg_loading_view_coordinator import SegLoadingViewCoordinator
-from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from quantus.data_objs import UltrasoundRfImage, BmodeSeg
 
 
 class SegmentationLoadingController(BaseController):
@@ -153,3 +153,4 @@ class SegmentationLoadingController(BaseController):
     def get_widget(self):
         """Get the view coordinator widget."""
         return self._view
+
