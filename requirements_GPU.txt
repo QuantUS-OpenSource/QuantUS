@@ -15,7 +15,5 @@ cupy-cuda12x>=14.0      # tested with 14.2.0; use the cupy build matching your C
 
 # --- MedSAM2 inference ---
 # The MedSAM2 fork (provides the `sam2` package; also installs hydra-core, iopath, SimpleITK, tqdm, pillow).
-# NOTE: needs the fork commit that ships sam2/configs/*.yaml (setup.py package_data); until that is
-# pushed, install from a local checkout instead:  pip install /path/to/MedSAM2
 MedSAM2 @ git+https://github.com/Yuanshan-Wu/MedSAM2.git@3DMPUS_finetune
 ipywidgets>=8.0         # interactive viewers (medsam2_viewer_base.py)
