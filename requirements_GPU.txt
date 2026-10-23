@@ -1,0 +1,21 @@
+# GPU / deep-learning dependencies: MedSAM2 inference and GPU motion compensation.
+# Install on top of the base requirements:
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # match your CUDA version
+#   pip install -r requirements.txt -r requirements_GPU.txt
+#
+# The base requirements.txt contains no GPU packages.
+
+# --- PyTorch (CUDA build; install from the index above, listed so `pip check` is satisfied) ---
+torch>=2.5.1            # tested with 2.11.0+cu128
+torchvision>=0.20.1     # tested with 0.26.0+cu128
+
+# --- GPU motion compensation (engines/ceus/src/seg_preprocessing/motion_compensation_3d_gpu.py) ---
+cupy-cuda12x>=14.0      # tested with 14.2.0; use the cupy build matching your CUDA major version
+
+# --- MedSAM2 inference ---
+# The MedSAM2 fork (provides the `sam2` package; also installs hydra-core, iopath, SimpleITK, tqdm, pillow).
+# NOTE: needs the fork commit that ships sam2/configs/*.yaml (setup.py package_data); until that is
+# pushed, install from a local checkout instead:  pip install /path/to/MedSAM2
+MedSAM2 @ git+https://github.com/Yuanshan-Wu/MedSAM2.git@3DMPUS_finetune
+ipywidgets>=8.0         # interactive viewers (medsam2_viewer_base.py)
