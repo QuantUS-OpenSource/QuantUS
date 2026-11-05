@@ -12,3 +12,4 @@ Visualization_Results/
 
 # MedSAM2 / model checkpoints (large; not tracked)
 AI_inference/**/*.pt
+AI_inference/MedSAM2/fold_assignment.json
