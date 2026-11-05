@@ -6,6 +6,7 @@ import os
 import pickle
 from pathlib import Path
 from typing import Optional
+import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -63,10 +64,17 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._original_displayed_im = None  # Store original image for brightness adjustment
         
         # Drawing mode tracking
-        self._current_drawing_mode = None  # 'points', 'rectangle', 'freehand', or None
-        
+        self._current_drawing_mode = None  # 'points', 'rectangle', 'freehand', 'fan', or None
+
         # Drawing parameters
         self._min_point_distance = 5.0  # Minimum distance between points in pixels
+
+        # Fan (sector) ROI state: raw-space index bounds (beam = lateral/angular index,
+        # sample = axial/depth index), i.e. a rectangle in raw (sample, beam) space, which
+        # is exactly what a fan-shaped region is in a curvilinear probe's native geometry.
+        # Only meaningful when self._image_data.sc_bmode is not None (scan-converted probes).
+        self._fan_beam_bounds: Optional[tuple] = None    # (beam_min, beam_max), raw indices
+        self._fan_sample_bounds: Optional[tuple] = None  # (sample_min, sample_max), raw indices
         
         # DICOM overlay control variables
         self._dicom_overlay_checkbox: Optional[QCheckBox] = None
@@ -295,12 +303,20 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         ]
         self._draw_types_objects = [
             'draw_rect_drag_type_button', 'draw_freehand_drag_type_button', 'draw_pts_type_button',
+            'draw_fan_type_button',
         ]
         self._draw_freehand_drag_objects = [
             'back_from_drag_button', 'save_drag_button',
         ]
         self._draw_rect_drag_objects = [
             'back_from_drag_button', 'save_drag_button',
+        ]
+        self._draw_fan_objects = [
+            'back_from_drag_button', 'save_drag_button',
+            'fan_top_label', 'fan_top_slider', 'fan_top_value_label',
+            'fan_bottom_label', 'fan_bottom_slider', 'fan_bottom_value_label',
+            'fan_left_label', 'fan_left_slider', 'fan_left_value_label',
+            'fan_right_label', 'fan_right_slider', 'fan_right_value_label',
         ]
         self._draw_pts_objects = [
             'undo_last_pt_button', 'clear_roi_button',
@@ -327,6 +343,16 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         
         # Display image for ROI drawing
         self._display_image_for_roi()
+
+        # Fan ROI only makes sense for scan-converted (curvilinear/sector) probes: a fan is
+        # exactly a rectangle in raw (sample, beam) space, which is only a meaningful distinct
+        # shape when the display has been scan-converted away from that raw rectangle. Linear
+        # probes already have display space == raw space, so the existing rectangle mode
+        # already does the equivalent job for them.
+        if self._image_data.sc_bmode is None:
+            self._ui.draw_fan_type_button.hide()
+
+        self._hide_draw_fan()
 
         self._ui.loading_screen_label.hide()
         self._hide_save_menu()
@@ -392,6 +418,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._ui.draw_freehand_drag_type_button.clicked.connect(self._on_draw_freehand_drag)
         self._ui.draw_rect_drag_type_button.clicked.connect(self._on_draw_rect_drag)
         self._ui.draw_pts_type_button.clicked.connect(self._on_draw_pts)
+        self._ui.draw_fan_type_button.clicked.connect(self._on_draw_fan)
         self._ui.back_from_drag_button.clicked.connect(self._show_draw_type_selection)
         self._ui.back_from_pts_button.clicked.connect(self._show_draw_type_selection)
         self._ui.save_drag_button.clicked.connect(self._show_save_menu)
@@ -403,7 +430,14 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         
         # Connect brightness slider
         self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
-        
+
+        # Connect fan ROI sliders once (not per mode-entry, same convention as brightness/
+        # transparency above) -- they're only visible/interactive in fan mode, so this is safe.
+        self._ui.fan_top_slider.valueChanged.connect(self._update_fan)
+        self._ui.fan_bottom_slider.valueChanged.connect(self._update_fan)
+        self._ui.fan_left_slider.valueChanged.connect(self._update_fan)
+        self._ui.fan_right_slider.valueChanged.connect(self._update_fan)
+
         # Connect DICOM overlay controls
         self._dicom_overlay_checkbox.toggled.connect(self._on_overlay_toggled)
         self._transparency_slider.valueChanged.connect(self._on_transparency_changed)
@@ -559,6 +593,11 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
                 if len(self._current_roi_coords) > 1 and hasattr(self, '_current_roi_border') and self._current_roi_border:
                     border_x, border_y = zip(*self._current_roi_border)
                     self._ax.plot(border_x, border_y, color='cyan')
+            elif self._current_drawing_mode == 'fan':
+                # Draw fan (sector) boundary -- same border-polygon convention as freehand
+                if hasattr(self, '_current_roi_border') and self._current_roi_border:
+                    border_x, border_y = zip(*self._current_roi_border)
+                    self._ax.plot(border_x, border_y, color='cyan', linewidth=1.5)
 
     def _display_image_for_roi(self) -> None:
         """Display image for ROI drawing."""
@@ -849,7 +888,120 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._cid_press = self._ax.figure.canvas.mpl_connect('button_press_event', on_press)
         self._cid_motion = self._ax.figure.canvas.mpl_connect('motion_notify_event', on_motion)
         self._cid_release = self._ax.figure.canvas.mpl_connect('button_release_event', on_release)
-    
+
+    def _on_draw_fan(self) -> None:
+        """Handle fan (sector) ROI drawing button click.
+
+        A fan is bounded by a depth range (top/bottom sliders) and an angular/beam range
+        (left/right sliders) -- an exact rectangle in raw (sample, beam) space. Because of
+        that, the mask this produces downstream (via the same xmap/ymap inverse-mapping
+        pkl_roi.py already uses for every ROI shape) is always a clean rectangle in raw
+        space, unlike an arbitrary polygon drawn on the fan display, which maps to an
+        irregular region that rarely aligns with the rectangular analysis windows.
+
+        Sliders set the fan's size (depth span, angular span); clicking on the image
+        recenters it on the clicked point without changing its size.
+        """
+        self._show_draw_fan()
+        self._current_drawing_mode = 'fan'
+        self._drawing = False
+
+        rf_shape = self._image_data.rf_data.shape
+        if self._image_data.rf_data.ndim == 3:
+            self._fan_n_samples, self._fan_n_beams = rf_shape[1], rf_shape[2]
+        else:
+            self._fan_n_samples, self._fan_n_beams = rf_shape[0], rf_shape[1]
+
+        self._update_fan()
+
+        def on_press(event):
+            if event.inaxes != self._ax or self._fan_beam_bounds is None or event.xdata is None:
+                return
+            xmap = self._image_data.xmap
+            ymap = self._image_data.ymap
+            y_idx = int(np.clip(round(event.ydata), 0, xmap.shape[0] - 1))
+            x_idx = int(np.clip(round(event.xdata), 0, xmap.shape[1] - 1))
+            beam = int(xmap[y_idx, x_idx])
+            sample = int(ymap[y_idx, x_idx])
+
+            beam_min, beam_max = self._fan_beam_bounds
+            sample_min, sample_max = self._fan_sample_bounds
+            beam_span = beam_max - beam_min
+            sample_span = sample_max - sample_min
+
+            new_beam_min = int(np.clip(beam - beam_span // 2, 0, max(0, self._fan_n_beams - 1 - beam_span)))
+            new_sample_min = int(np.clip(sample - sample_span // 2, 0, max(0, self._fan_n_samples - 1 - sample_span)))
+            self._fan_beam_bounds = (new_beam_min, new_beam_min + beam_span)
+            self._fan_sample_bounds = (new_sample_min, new_sample_min + sample_span)
+            self._draw_fan_from_bounds()
+
+        self._cid_press = self._ax.figure.canvas.mpl_connect('button_press_event', on_press)
+
+    def _update_fan(self) -> None:
+        """Recompute the fan ROI's raw-space bounds from the current slider values (resizing
+        it) and redraw. Connected to all four fan sliders' valueChanged signals.
+        """
+        if self._current_drawing_mode != 'fan' or not hasattr(self, '_ax') or self._ax is None:
+            return
+        if self._image_data.sc_bmode is None:
+            return
+
+        n_samples, n_beams = self._fan_n_samples, self._fan_n_beams
+
+        top_frac = self._ui.fan_top_slider.value() / 1000.0
+        bottom_frac = self._ui.fan_bottom_slider.value() / 1000.0
+        left_frac = self._ui.fan_left_slider.value() / 1000.0
+        right_frac = self._ui.fan_right_slider.value() / 1000.0
+
+        sample_min = int(round(min(top_frac, bottom_frac) * (n_samples - 1)))
+        sample_max = int(round(max(top_frac, bottom_frac) * (n_samples - 1)))
+        beam_min = int(round(min(left_frac, right_frac) * (n_beams - 1)))
+        beam_max = int(round(max(left_frac, right_frac) * (n_beams - 1)))
+
+        self._fan_sample_bounds = (sample_min, sample_max)
+        self._fan_beam_bounds = (beam_min, beam_max)
+
+        self._ui.fan_top_value_label.setText(f"{sample_min * self._image_data.axial_res:.1f} mm")
+        self._ui.fan_bottom_value_label.setText(f"{sample_max * self._image_data.axial_res:.1f} mm")
+        self._ui.fan_left_value_label.setText(f"A-line {beam_min}")
+        self._ui.fan_right_value_label.setText(f"A-line {beam_max}")
+
+        self._draw_fan_from_bounds()
+
+    def _draw_fan_from_bounds(self) -> None:
+        """Build the fan's display-space outline from the current raw-index bounds via the
+        image's xmap/ymap (display pixel -> raw beam/sample), and redraw it.
+
+        Reusing xmap/ymap here -- the same arrays pkl_roi.py uses to invert a drawn ROI back
+        to raw space -- guarantees the fan drawn on screen matches the raw-space rectangle
+        exactly, instead of re-deriving the sector geometry a second, possibly inconsistent,
+        way.
+        """
+        beam_min, beam_max = self._fan_beam_bounds
+        sample_min, sample_max = self._fan_sample_bounds
+
+        xmap = self._image_data.xmap
+        ymap = self._image_data.ymap
+        membership = ((xmap >= beam_min) & (xmap <= beam_max) &
+                      (ymap >= sample_min) & (ymap <= sample_max)).astype(np.uint8)
+
+        contours, _ = cv2.findContours(membership, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            self._current_roi_border = []
+            self._current_roi_coords = []
+        else:
+            largest = max(contours, key=cv2.contourArea)
+            points = [(float(p[0][0]), float(p[0][1])) for p in largest]
+            if points and points[0] != points[-1]:
+                points.append(points[0])  # close the loop
+            self._current_roi_border = points
+            self._current_roi_coords = points
+
+        self._ax.clear()
+        self._plot_im_on_ax(self._ax)
+        self._redraw_roi()
+        self._matplotlib_canvas.draw()
+
     def _select_dest_folder(self) -> None:
         """
         Helper method for folder selection dialogs.
@@ -883,6 +1035,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._hide_draw_freehand_drag()
         self._hide_draw_rect_drag()
         self._hide_draw_pts()
+        self._hide_draw_fan()
         self._hide_draw_type_selection()
         self._hide_dicom_controls()
 
@@ -974,6 +1127,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._hide_draw_freehand_drag()
         self._hide_draw_rect_drag()
         self._hide_draw_pts()
+        self._hide_draw_fan()
         self._setup_dicom_overlay_control()
 
         for obj_name in self._draw_types_objects:
@@ -997,6 +1151,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._hide_draw_type_selection()
         self._hide_draw_pts()
         self._hide_draw_rect_drag()
+        self._hide_draw_fan()
 
         for obj_name in self._draw_freehand_drag_objects:
             widget = getattr(self._ui, obj_name, None)
@@ -1019,6 +1174,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._hide_draw_type_selection()
         self._hide_draw_freehand_drag()
         self._hide_draw_pts()
+        self._hide_draw_fan()
 
         for obj_name in self._draw_rect_drag_objects:
             widget = getattr(self._ui, obj_name, None)
@@ -1041,10 +1197,34 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._hide_draw_type_selection()
         self._hide_draw_freehand_drag()
         self._hide_draw_rect_drag()
+        self._hide_draw_fan()
 
         for obj_name in self._draw_pts_objects:
             widget = getattr(self._ui, obj_name, None)
-            if widget:  
+            if widget:
+                widget.show()
+            else:
+                print(f"Warning: Widget '{obj_name}' not found in UI")
+
+    def _hide_draw_fan(self) -> None:
+        """Hide the fan (sector) ROI drawing layout."""
+        for obj_name in self._draw_fan_objects:
+            widget = getattr(self._ui, obj_name, None)
+            if widget:
+                widget.hide()
+            else:
+                print(f"Warning: Widget '{obj_name}' not found in UI")
+
+    def _show_draw_fan(self) -> None:
+        """Show the fan (sector) ROI drawing layout."""
+        self._hide_draw_type_selection()
+        self._hide_draw_freehand_drag()
+        self._hide_draw_rect_drag()
+        self._hide_draw_pts()
+
+        for obj_name in self._draw_fan_objects:
+            widget = getattr(self._ui, obj_name, None)
+            if widget:
                 widget.show()
             else:
                 print(f"Warning: Widget '{obj_name}' not found in UI")
