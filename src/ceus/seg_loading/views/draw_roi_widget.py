@@ -18,6 +18,10 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from ...mvc.base_view import BaseViewMixin
 from ..ui.draw_roi_ui import Ui_constructRoi
 from engines.ceus.src.data_objs import UltrasoundImage
+from engines.ceus.src.data_objs.seg import CeusSeg
+from engines.ceus.src.seg_preprocessing.motion_compensation_2d import (
+    MotionCompensation2DResult, track_motion_2d
+)
 
 
 class DrawROIWidget(QWidget, BaseViewMixin):
@@ -31,17 +35,26 @@ class DrawROIWidget(QWidget, BaseViewMixin):
     
     # Signals for communicating with controller
     segmentation_saved = pyqtSignal(str)  # emit with saved file path
+    segmentation_confirmed = pyqtSignal(object)  # CeusSeg handed straight to analysis
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
 
-    def __init__(self, image_data: UltrasoundImage, parent: Optional[QWidget] = None):
+    def __init__(self, image_data: UltrasoundImage, bmode_image_data: Optional[UltrasoundImage] = None,
+                 parent: Optional[QWidget] = None):
         QWidget.__init__(self, parent)
         self.__init_base_view__(parent)
         self._ui = Ui_constructRoi()
         self._image_data = image_data
         self._matplotlib_canvas: Optional[FigureCanvas] = None
         self._frame = 0
-        self._all_frames = self._image_data.pixel_data
+        # With a B-mode image the ROI is drawn on B-mode (same pixel grid as the
+        # contrast image) and can be motion compensated on it
+        self._bmode_image_data = bmode_image_data
+        self._all_frames = (bmode_image_data.pixel_data if bmode_image_data is not None
+                            else self._image_data.pixel_data)
+        self._mc_result: Optional[MotionCompensation2DResult] = None
+        self._mc_mask: Optional[np.ndarray] = None  # ROI the MC result was run on
+        self._mc_box_artist = None
 
         # ROI drawing variables
         self._dragging_drawing = False  # Flag to track if dragging drawing is in progress
@@ -113,7 +126,8 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         # Setup matplotlib canvas for frame preview
         self._setup_matplotlib_canvas()
         self._setup_enhancement_controls()
-        
+        self._setup_roi_actions()
+
         # Display frame preview
         self._initialize_frame_preview()
         
@@ -159,8 +173,17 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         try:
             fig = self._matplotlib_canvas.figure
             fig.clear()
-            self._ax = fig.add_subplot(111)
-            self._ax.set_position([0, 0, 1, 1])
+            if self._bmode_image_data is not None:
+                # CEUS (left) and B-mode (right) side by side, on the same pixel
+                # grid; the ROI and tracked box are mirrored on both
+                self._ce_ax = fig.add_subplot(121)
+                self._ce_ax.set_position([0, 0, 0.5, 1])
+                self._ce_ax.axis("off")
+                self._ax = fig.add_subplot(122)
+                self._ax.set_position([0.5, 0, 0.5, 1])
+            else:
+                self._ax = fig.add_subplot(111)
+                self._ax.set_position([0, 0, 1, 1])
             self._ax.axis("off")
 
             # Create the initial image artist - this will be reused for all frames
@@ -168,10 +191,19 @@ class DrawROIWidget(QWidget, BaseViewMixin):
             self._im_artist = self._ax.imshow(self._displayed_im, cmap="gray", animated=True, zorder=1)
             self._roi_plot_artist = self._ax.plot([], [], color='cyan', linewidth=1, zorder=9, animated=True)
             self._roi_scatter_artist = self._ax.scatter([], [], color='red', marker='o', s=5, zorder=10, animated=True)
+            self._mc_box_artist = self._ax.plot([], [], color='yellow', linewidth=1, zorder=8, animated=True)
+            self._draw_axes = [self._ax]
+            if self._bmode_image_data is not None:
+                self._ce_im_artist = self._ce_ax.imshow(
+                    self._image_data.pixel_data[self._frame], cmap="gray", animated=True, zorder=1)
+                self._ce_roi_artist = self._ce_ax.plot([], [], color='cyan', linewidth=1, zorder=9, animated=True)[0]
+                self._ce_mc_box_artist = self._ce_ax.plot([], [], color='yellow', linewidth=1, zorder=8, animated=True)[0]
+                self._draw_axes.append(self._ce_ax)
 
             # Set proper aspect ratio
             extent = self._im_artist.get_extent()
-            self._ax.set_aspect(abs((extent[1]-extent[0])/(extent[3]-extent[2]))/self.aspect)
+            for ax in self._draw_axes:
+                ax.set_aspect(abs((extent[1]-extent[0])/(extent[3]-extent[2]))/self.aspect)
             
             # Setup the animation for smooth frame updates
             self._setup_frame_animation()
@@ -189,7 +221,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
         def init():
             # Return all artists that will be animated
-            return [self._im_artist, self._roi_plot_artist[0], self._roi_scatter_artist]
+            return self._animated_artists()
 
         self._animation = anim.FuncAnimation(
             self._matplotlib_canvas.figure,
@@ -203,9 +235,10 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         
     def _update_frame_animated(self, frame_num) -> list:
         """Animation update function for smooth frame transitions."""
+        artists = self._animated_artists()
         if not self._frame_update_pending:
-            return [self._im_artist, self._roi_plot_artist[0], self._roi_scatter_artist]
-        
+            return artists
+
         # Update to target frame
         if self._frame != self._target_frame:
             self._frame = self._target_frame
@@ -214,14 +247,24 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         self._update_roi_scatter()
 
         self._frame_update_pending = False
-        return [self._im_artist, self._roi_plot_artist[0], self._roi_scatter_artist]
+        return artists
         
+    def _animated_artists(self) -> list:
+        """All artists redrawn by the blitting animation."""
+        artists = [self._im_artist, self._roi_plot_artist[0], self._roi_scatter_artist,
+                   self._mc_box_artist[0]]
+        if self._bmode_image_data is not None:
+            artists += [self._ce_im_artist, self._ce_roi_artist, self._ce_mc_box_artist]
+        return artists
+
     def _update_roi_plot(self) -> None:
         """Create/update the ROI plot artist for blitting."""
         if self._roi_plot_artist is None:
             return
 
         self._roi_plot_artist[0].set_data(self._roi_plot_coords[0], self._roi_plot_coords[1])
+        if self._bmode_image_data is not None:
+            self._ce_roi_artist.set_data(self._roi_plot_coords[0], self._roi_plot_coords[1])
 
     def _update_roi_scatter(self) -> None:
         """Create/update the ROI scatter artist for blitting."""
@@ -252,7 +295,8 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         if height_phys != 0:
             new_aspect = width_phys / height_phys
             extent = self._im_artist.get_extent()
-            self._ax.set_aspect(abs((extent[1]-extent[0])/(extent[3]-extent[2]))/new_aspect)
+            for ax in self._draw_axes:
+                ax.set_aspect(abs((extent[1]-extent[0])/(extent[3]-extent[2]))/new_aspect)
             self._matplotlib_canvas.draw_idle()
 
     def _setup_enhancement_controls(self) -> None:
@@ -314,7 +358,105 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         if self._im_artist:
             self._displayed_im = self._all_frames[frame_index]
             self._im_artist.set_array(self._displayed_im)
+            if self._bmode_image_data is not None:
+                self._ce_im_artist.set_array(self._image_data.pixel_data[frame_index])
             self._ui.cur_frame_label.setText(str(np.round(frame_index*self._image_data.frame_rate, decimals=2)))
+            self._update_mc_overlay(frame_index)
+
+    def _update_mc_overlay(self, frame_index: int) -> None:
+        """Draw this frame's tracked ROI box on both panels; rejected frames show none."""
+        if self._mc_box_artist is None:
+            return
+        bbox = self._mc_result.bboxes[frame_index] if self._mc_result is not None else None
+        if bbox is None:
+            xs, ys = [], []
+        else:
+            x0, y0, w, h = bbox
+            xs, ys = [x0, x0 + w, x0 + w, x0, x0], [y0, y0, y0 + h, y0 + h, y0]
+        self._mc_box_artist[0].set_data(xs, ys)
+        if self._bmode_image_data is not None:
+            self._ce_mc_box_artist.set_data(xs, ys)
+        if self._mc_result is not None:
+            state = "tracked" if bbox is not None else "rejected (out of plane)"
+            self._mc_status_label.setText(
+                f"Motion compensation: {len(self._mc_result.kept_frames)}/{len(self._mc_result.bboxes)} "
+                f"frames kept\nThis frame: {state}")
+
+    def _setup_roi_actions(self) -> None:
+        """Run Motion Compensation (needs B-mode) and Continue to Analysis buttons."""
+        from PyQt6.QtWidgets import QPushButton, QLabel
+
+        self._roi_action_widgets = []
+        if self._bmode_image_data is not None:
+            self._run_mc_button = QPushButton("Run Motion Compensation")
+            self._run_mc_button.clicked.connect(self._on_run_mc)
+            self._roi_action_widgets.append(self._run_mc_button)
+
+        self._continue_button = QPushButton("Continue to Analysis")
+        self._continue_button.clicked.connect(self._on_continue_to_analysis)
+        self._roi_action_widgets.append(self._continue_button)
+
+        self._mc_status_label = QLabel("")
+        self._mc_status_label.setWordWrap(True)
+        self._mc_status_label.setStyleSheet("color: white; font-size: 13px;")
+        self._roi_action_widgets.append(self._mc_status_label)
+
+        for widget in self._roi_action_widgets:
+            if isinstance(widget, QPushButton):
+                widget.setStyleSheet(self._ui.back_button.styleSheet())
+            self._ui.side_bar_layout.addWidget(widget)
+            widget.hide()
+
+    def _current_roi_mask(self) -> Optional[np.ndarray]:
+        """Binary mask of the drawn ROI, or None (with an error shown) if there is none."""
+        if len(self._roi_plot_coords[0]) < 3:
+            self.show_error("Please draw a valid region of interest first.")
+            return None
+        spline = [(self._roi_plot_coords[0][i], self._roi_plot_coords[1][i]) for i in range(len(self._roi_plot_coords[0]))]
+        mask = Image.new("L", (self._all_frames[self._frame].shape[1], self._all_frames[self._frame].shape[0]), 0)
+        ImageDraw.Draw(mask).polygon(spline, outline=1, fill=1)
+        return np.array(mask, dtype=np.uint8)
+
+    def _mc_for_mask(self, mask: np.ndarray) -> Optional[MotionCompensation2DResult]:
+        """The motion compensation result if it was run on this exact ROI, else None."""
+        if self._mc_result is not None and np.array_equal(mask, self._mc_mask):
+            return self._mc_result
+        return None
+
+    def _on_run_mc(self) -> None:
+        """Track the drawn ROI on B-mode from the current frame and show the boxes."""
+        mask = self._current_roi_mask()
+        if mask is None:
+            return
+        from PyQt6.QtWidgets import QApplication
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self._mc_result = track_motion_2d(
+                self._bmode_image_data.intensities_for_analysis, mask, self._frame)
+            self._mc_mask = mask
+        except Exception as e:
+            # An exception escaping a Qt slot aborts the whole app; report it
+            # instead so the drawn ROI isn't lost
+            self.show_error(f"Motion compensation failed: {e}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.clear_error()
+        self._update_mc_overlay(self._frame)
+        self._frame_update_pending = True
+
+    def _on_continue_to_analysis(self) -> None:
+        """Hand the drawn ROI (with motion compensation, if run on it) to analysis."""
+        mask = self._current_roi_mask()
+        if mask is None:
+            return
+        seg = CeusSeg()
+        seg.seg_mask = mask
+        seg.seg_name = self._ui.save_name_input.text().strip() or f"{self._image_data.scan_name}_ROI"
+        seg.pixdim = list(self._image_data.pixdim)
+        seg.motion_compensation = self._mc_for_mask(mask)
+        seg.use_mc = seg.motion_compensation is not None
+        self.segmentation_confirmed.emit(seg)
 
     def _force_frame_update(self) -> None:
         """Force immediate frame update without animation (for initialization)."""
@@ -488,7 +630,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
             return distance >= self._min_point_distance
 
         def on_press(event):
-            if self._drawing and event.inaxes == self._ax:
+            if self._drawing and event.inaxes in self._draw_axes:
                 # Check for duplicate points to prevent overshooting
                 if not check_point_distance(event.xdata, event.ydata):
                     return
@@ -501,7 +643,7 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
         def on_motion(event):
             """Handle mouse motion to show distance feedback."""
-            if self._drawing and event.inaxes == self._ax and len(self._roi_scatter_coords[0]):
+            if self._drawing and event.inaxes in self._draw_axes and len(self._roi_scatter_coords[0]):
                 # Check if mouse is too close to last point
                 if not check_point_distance(event.xdata, event.ydata):
                     # Change cursor or add visual feedback
@@ -522,12 +664,12 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         self._drawing = False
 
         def on_press(event):
-            if event.inaxes == self._ax:
+            if event.inaxes in self._draw_axes:
                 self._drawing = True
                 self._roi_scatter_coords = [[event.xdata], [event.ydata]]
 
         def on_motion(event):
-            if self._drawing and event.inaxes == self._ax:
+            if self._drawing and event.inaxes in self._draw_axes:
                 if len(self._roi_scatter_coords[0]) == 1:
                     self._roi_scatter_coords[0].append(event.xdata)
                     self._roi_scatter_coords[1].append(event.ydata)
@@ -598,12 +740,12 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         self._drawing = False
 
         def on_press(event):
-            if event.inaxes == self._ax:
+            if event.inaxes in self._draw_axes:
                 self._drawing = True
                 self._roi_scatter_coords = [[event.xdata], [event.ydata]]
 
         def on_motion(event):
-            if self._drawing and event.inaxes == self._ax:
+            if self._drawing and event.inaxes in self._draw_axes:
                 self._roi_scatter_coords[0].append(event.xdata)
                 self._roi_scatter_coords[1].append(event.ydata)
 
@@ -692,6 +834,8 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
     def _hide_draw_type_selection(self) -> None:
         """Hide the draw type selection layout."""
+        for widget in self._roi_action_widgets:
+            widget.show()
         for obj_name in self._draw_types_objects:
             widget = getattr(self._ui, obj_name, None)
             if widget:
@@ -701,8 +845,15 @@ class DrawROIWidget(QWidget, BaseViewMixin):
 
     def _show_draw_type_selection(self) -> None:
         """Show the draw type selection layout."""
-        # Remove the current ROI
+        # Remove the current ROI and any motion compensation run on it
         self._roi_plot_coords = [[], []]; self._roi_scatter_coords = np.empty((2, 0))
+        if self._mc_result is not None:
+            self._mc_result = None
+            self._mc_mask = None
+            self._update_mc_overlay(self._frame)
+        self._mc_status_label.setText("")
+        for widget in self._roi_action_widgets:
+            widget.hide()
         self._update_drawing_status()
 
         self._roi_scattering_active = False; self._drawing = False
@@ -829,20 +980,22 @@ class DrawROIWidget(QWidget, BaseViewMixin):
             self.show_error("Please enter a valid name for the segmentation.")
             return
 
-        # Ensure there is a drawn ROI to save
-        if len(self._roi_plot_coords[0]) < 3:
-            self.show_error("Please draw a valid region of interest before saving.")
-            return
-
         # Create binary mask from drawn ROI
-        spline = [(self._roi_plot_coords[0][i], self._roi_plot_coords[1][i]) for i in range(len(self._roi_plot_coords[0]))]
-        mask = Image.new("L", (self._all_frames[self._frame].shape[1], self._all_frames[self._frame].shape[0]), 0)
-        ImageDraw.Draw(mask).polygon(spline, outline=1, fill=1)
-        mask = np.array(mask, dtype=np.uint8)
+        mask = self._current_roi_mask()
+        if mask is None:
+            return
 
         # Save mask as NIfTI file
         nii_path = os.path.join(dest_folder, f"{roi_name}.nii.gz")
         nii_img = nib.Nifti1Image(mask, affine=np.eye(4))
+
+        # Motion compensation run on this ROI rides along in the NIfTI, so
+        # loading the file restores it
+        mc = self._mc_for_mask(mask)
+        if mc is not None:
+            nii_img.header.extensions.append(
+                nib.nifti1.Nifti1Extension('comment', mc.to_json().encode()))
+
         nib.save(nii_img, nii_path)
 
         self.segmentation_saved.emit(nii_path)

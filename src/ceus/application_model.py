@@ -509,6 +509,9 @@ class ApplicationModel(BaseModel):
             # If B-mode is still loading, wait for it before emitting
             if self._pending_bmode_load:
                 return
+            # A dual-display DICOM carries its own B-mode panel
+            if self._bmode_image_data is None and getattr(image_data, 'bmode_image', None) is not None:
+                self._bmode_image_data = image_data.bmode_image
             self._set_loading(False)
             self.image_loaded.emit(image_data)
         else:

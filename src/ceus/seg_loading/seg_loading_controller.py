@@ -78,7 +78,10 @@ class SegmentationLoadingController(BaseController):
         elif action_name == 'rerun_motion_compensation':
             self.model.apply_motion_compensation(action_data)
         elif action_name == 'segmentation_confirmed':
-            pass  # Handle confirmation action in the application controller
+            # The application controller moves on to analysis using the model's
+            # segmentation; an ROI drawn in the 2D widget only exists in memory
+            if action_data is not None:
+                self.model._seg_data = action_data
         else:
             raise ValueError(f"Unknown action: {action_name}")
         

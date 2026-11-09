@@ -245,11 +245,13 @@ class SegLoadingViewCoordinator(QStackedWidget):
 
     def show_roi_drawing(self) -> None:
         """Show the ROI drawing widget."""
-        self._roi_drawing_widget = DrawROIWidget(self._image_data)
+        self._roi_drawing_widget = DrawROIWidget(self._image_data, bmode_image_data=self._bmode_image_data)
 
         # Connect signals to handle user actions
         self._roi_drawing_widget.back_requested.connect(self.reset_to_seg_type_selection)
         self._roi_drawing_widget.close_requested.connect(self.close_requested.emit)
+        self._roi_drawing_widget.segmentation_confirmed.connect(
+            lambda seg_data: self._emit_user_action('segmentation_confirmed', seg_data))
 
         # Add to stack and show
         self.addWidget(self._roi_drawing_widget)
