@@ -28,6 +28,7 @@ from engines.qus.quantus.entrypoints import (
 )
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
+from engines.qus.quantus.power_spectrum import SpectrumBandwidth, apply_bandwidth_to_config
 
 
 class ScanLoadingWorker(QThread):
@@ -183,6 +184,10 @@ class ApplicationModel(BaseModel):
         self._selected_scan_type: Optional[str] = None
         self._image_data: Optional[UltrasoundRfImage] = None
         self._scan_worker: Optional[ScanLoadingWorker] = None
+
+        # Spectrum check state (band accepted between image loading and segmentation)
+        self._spectrum_band: Optional[SpectrumBandwidth] = None
+        self._spectrum_sampling_frequency: Optional[float] = None  # Hz, as used for the band
         
         # Segmentation loading state
         self._seg_loaders: Dict[str, Any] = {}
@@ -428,6 +433,8 @@ class ApplicationModel(BaseModel):
         
         if scan_loader_kwargs is None:
             scan_loader_kwargs = {}
+
+        self.set_spectrum_band(None, None)  # a new image invalidates any accepted band
         
         input_data = {
             'scan_type': self._selected_scan_type,
@@ -812,6 +819,36 @@ class ApplicationModel(BaseModel):
         self._config_data = config_data
         self.config_loaded.emit(config_data)
     
+    # Spectrum check
+    @property
+    def spectrum_band(self) -> Optional[SpectrumBandwidth]:
+        """Analysis band accepted in the spectrum check step, or None if skipped."""
+        return self._spectrum_band
+
+    @property
+    def spectrum_sampling_frequency(self) -> Optional[float]:
+        """Sampling frequency (Hz) the accepted spectrum band was computed with."""
+        return self._spectrum_sampling_frequency
+
+    def set_spectrum_band(self, band: Optional[SpectrumBandwidth], sampling_frequency: Optional[float]) -> None:
+        self._spectrum_band = band
+        self._spectrum_sampling_frequency = sampling_frequency
+
+    def _apply_spectrum_band(self, config_data: RfAnalysisConfig) -> None:
+        """Override a loaded config's analysis band / center frequency with the accepted band.
+
+        Not applied to the Custom config, whose form is pre-filled with the band instead so
+        values the user typed are never silently replaced.
+        """
+        if self._spectrum_band is None or self._selected_config_type == "custom":
+            return
+        apply_bandwidth_to_config(config_data, self._spectrum_band)
+        cfg_fs = getattr(config_data, "sampling_frequency", None)
+        if cfg_fs and self._spectrum_sampling_frequency and \
+                abs(cfg_fs - self._spectrum_sampling_frequency) > 0.01 * cfg_fs:
+            print(f"WARNING: spectrum band was computed at fs = {self._spectrum_sampling_frequency / 1e6:.3f} MHz "
+                  f"but the config uses {cfg_fs / 1e6:.3f} MHz")
+
     def _on_config_loading_complete(self, config_data: RfAnalysisConfig) -> None:
         """
         Handle completion of config loading.
@@ -823,6 +860,7 @@ class ApplicationModel(BaseModel):
         
         # Check if loading was successful
         if config_data and hasattr(config_data, 'transducer_freq_band'):
+            self._apply_spectrum_band(config_data)
             self._config_data = config_data
             self.config_loaded.emit(config_data)
         else:

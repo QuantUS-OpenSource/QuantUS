@@ -244,6 +244,18 @@ class CustomParamsWidget(QWidget, BaseViewMixin):
     # PUBLIC INTERFACE
     # ============================================================================
     
+    def prefill_frequencies(self, analysis_band=None, center_frequency=None, sampling_frequency=None) -> None:
+        """Pre-fill frequency fields (Hz), e.g. from the band accepted in the spectrum check step."""
+        if sampling_frequency:
+            self._sampling_freq.setValue(int(round(sampling_frequency)))
+            self._transducer_min.setValue(0)
+            self._transducer_max.setValue(int(round(sampling_frequency / 2)))
+        if analysis_band is not None:
+            self._analysis_lower.setValue(int(round(analysis_band[0])))
+            self._analysis_upper.setValue(int(round(analysis_band[1])))
+        if center_frequency is not None:
+            self._center_freq.setValue(int(round(center_frequency)))
+
     def clear_error(self) -> None:
         """Clear any error messages."""
         # Could add error display functionality here

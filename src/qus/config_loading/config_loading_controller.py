@@ -48,6 +48,13 @@ class ConfigLoadingController(BaseController):
         
         # Setup available config loaders
         self._setup_config_loaders()
+
+        # Band accepted in the spectrum check step pre-fills the Custom config form
+        band = getattr(model, 'spectrum_band', None)
+        if band is not None:
+            self._view_coordinator.set_frequency_prefill(
+                analysis_band=[band.f_min, band.f_max], center_frequency=band.f_center,
+                sampling_frequency=getattr(model, 'spectrum_sampling_frequency', None))
         
     def _connect_signals(self) -> None:
         """Connect signals between view coordinator and controller."""

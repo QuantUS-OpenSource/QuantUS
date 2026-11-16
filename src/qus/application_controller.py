@@ -11,6 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QEvent
 from .application_model import ApplicationModel
 from src.qus.image_loading.image_loading_view_coordinator import ImageLoadingViewCoordinator
 from src.qus.image_loading.image_loading_controller import ImageLoadingController
+from src.qus.spectrum_check.spectrum_check_controller import SpectrumCheckController, spectrum_check_supported
 from src.qus.seg_loading.seg_loading_controller import SegmentationLoadingController
 from src.qus.config_loading.config_loading_controller import ConfigLoadingController
 from src.qus.analysis_loading.analysis_loading_controller import AnalysisLoadingController
@@ -44,6 +45,7 @@ class ApplicationController(QObject):
         
         # Controllers for different screens (using the same model)
         self._image_loading_controller: Optional[ImageLoadingController] = None
+        self._spectrum_check_controller: Optional[SpectrumCheckController] = None
         self._segmentation_controller: Optional[SegmentationLoadingController] = None
         self._config_loading_controller: Optional[ConfigLoadingController] = None
         self._analysis_loading_controller: Optional[AnalysisLoadingController] = None
@@ -138,7 +140,7 @@ class ApplicationController(QObject):
         
     def _connect_model_signals(self) -> None:
         """Connect unified model signals to application controller."""
-        self._model.image_loaded.connect(self._initialize_segmentation_loading)
+        self._model.image_loaded.connect(self._initialize_spectrum_check)
         self._model.error_occurred.connect(self._on_model_error)
         
     def _initialize_image_loading(self) -> None:
@@ -156,6 +158,68 @@ class ApplicationController(QObject):
         self._widget_stack.addWidget(self._image_loading_controller.view)
         self._widget_stack.setCurrentWidget(self._image_loading_controller.view)
         
+    def _initialize_spectrum_check(self, image_data: UltrasoundRfImage) -> None:
+        """
+        Initialize the spectrum check screen (sample vs. phantom ROI power spectra), shown
+        between image loading and segmentation. Data it can't handle (e.g. 3D volumes) goes
+        straight to segmentation.
+
+        Args:
+            image_data: Loaded image data from previous screen
+        """
+        self._image_data = image_data
+        if self._spectrum_check_controller:
+            self._cleanup_spectrum_check()
+
+        if not spectrum_check_supported(image_data):
+            self._model.set_spectrum_band(None, None)
+            self._initialize_segmentation_loading(image_data)
+            return
+
+        try:
+            self._spectrum_check_controller = SpectrumCheckController(self._model, image_data)
+        except Exception as e:
+            print(f"WARNING: Spectrum check unavailable ({e}); continuing to segmentation")
+            self._spectrum_check_controller = None
+            self._model.set_spectrum_band(None, None)
+            self._initialize_segmentation_loading(image_data)
+            return
+
+        self._spectrum_check_controller.user_action.connect(self._on_spectrum_check_action)
+        self._spectrum_check_controller.back_requested.connect(self._navigate_to_image_loading)
+        self._widget_stack.addWidget(self._spectrum_check_controller.get_widget())
+        self._widget_stack.setCurrentWidget(self._spectrum_check_controller.get_widget())
+
+    def _on_spectrum_check_action(self, action_name: str, action_data) -> None:
+        """Band accepted or skipped: continue to segmentation."""
+        if action_name == 'spectrum_check_completed':
+            image_data = self._model.image_data if self._model.image_data is not None else self._image_data
+            self._initialize_segmentation_loading(image_data)
+
+    def _navigate_to_spectrum_check(self) -> None:
+        """Navigate back from segmentation to the spectrum check (or image loading if it was skipped)."""
+        if self._spectrum_check_controller is None:
+            self._navigate_to_image_loading()
+            return
+        if self._segmentation_controller:
+            self._cleanup_segmentation_loading()
+        self._widget_stack.setCurrentWidget(self._spectrum_check_controller.get_widget())
+        self._seg_data = None
+        self._config_data = None
+
+    def _cleanup_spectrum_check(self) -> None:
+        """Clean up spectrum check controller resources."""
+        try:
+            if self._spectrum_check_controller:
+                widget = self._spectrum_check_controller.get_widget()
+                if widget is not None:
+                    self._widget_stack.removeWidget(widget)
+                    widget.deleteLater()
+                self._spectrum_check_controller.cleanup()
+        except Exception as e:
+            print(f"Warning: Error during spectrum check cleanup: {e}")
+        self._spectrum_check_controller = None
+
     def _initialize_segmentation_loading(self, image_data: UltrasoundRfImage) -> None:
         """
         Initialize the segmentation loading screen.
@@ -171,7 +235,7 @@ class ApplicationController(QObject):
         
         # Connect to handle segmentation actions
         self._segmentation_controller.view.user_action.connect(self._on_segmentation_action)
-        self._segmentation_controller.view.back_requested.connect(self._navigate_to_image_loading)
+        self._segmentation_controller.view.back_requested.connect(self._navigate_to_spectrum_check)
         
         # Add to stack and show
         self._widget_stack.addWidget(self._segmentation_controller.view)
@@ -242,7 +306,7 @@ class ApplicationController(QObject):
         """
         if action_name == 'image_loaded':
             self._image_data = action_data
-            self._initialize_segmentation_loading(self._image_data)
+            self._initialize_spectrum_check(self._image_data)
             
     def _on_segmentation_action(self, action_name: str, action_data) -> None:
         """
@@ -381,9 +445,12 @@ class ApplicationController(QObject):
         if self._image_loading_controller:
             self._image_loading_controller.reset_view()
             
-        # Clean up segmentation controller
+        # Clean up segmentation and spectrum check controllers
         if self._segmentation_controller:
             self._cleanup_segmentation_loading()
+        if self._spectrum_check_controller:
+            self._cleanup_spectrum_check()
+        self._model.set_spectrum_band(None, None)
             
         # Show image loading screen
         if self._image_loading_controller:
@@ -594,6 +661,7 @@ class ApplicationController(QObject):
             self._widget_stack.removeEventFilter(self)
             
         self._cleanup_image_loading()
+        self._cleanup_spectrum_check()
         self._cleanup_segmentation_loading()
         self._cleanup_config_loading()
         self._cleanup_analysis_loading()

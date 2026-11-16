@@ -50,6 +50,7 @@ class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self._config_type_widget: Optional[ConfigTypeSelectionWidget] = None
         self._config_file_widget: Optional[ConfigFileSelectionWidget] = None
         self._custom_params_widget: Optional[CustomParamsWidget] = None
+        self._frequency_prefill: dict = {}  # from the spectrum check step, applied to the Custom form
         self._config_preview_widget: Optional[ConfigPreviewWidget] = None
         self._input_file_extensions: List[str] = []
         
@@ -162,9 +163,16 @@ class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
             self._custom_params_widget.params_configured.connect(self._on_custom_params_configured)
             self._custom_params_widget.back_requested.connect(self._on_custom_params_back)
             self.addWidget(self._custom_params_widget)
+            if self._frequency_prefill:
+                self._custom_params_widget.prefill_frequencies(**self._frequency_prefill)
         
         self.setCurrentWidget(self._custom_params_widget)
         self._custom_params_widget.clear_error()
+
+    def set_frequency_prefill(self, analysis_band=None, center_frequency=None, sampling_frequency=None) -> None:
+        """Frequencies (Hz) to pre-fill the Custom config form with."""
+        self._frequency_prefill = {k: v for k, v in dict(analysis_band=analysis_band, center_frequency=center_frequency,
+                                                          sampling_frequency=sampling_frequency).items() if v is not None}
 
     def show_config_preview(self, config_data: RfAnalysisConfig) -> None:
         """
