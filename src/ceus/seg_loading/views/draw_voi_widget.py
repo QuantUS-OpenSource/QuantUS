@@ -215,6 +215,7 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         self._width_scale_sagittal = 1.0
         self._width_scale_coronal = 1.0
         self._use_philips_ceus = False
+        self._mask_opacity = 0.5  # VOI fill opacity, 0–1
 
         self._pix_data = image_data.pixel_data  # keep raw data untouched
         self._ceus_p_low = self._compute_noise_floor(image_data)  # noise floor scalar (0–255); user-adjustable
@@ -759,9 +760,15 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         denoise_layout.addWidget(denoise_str_col)
         row1_layout.addWidget(denoise_frame)
 
+        # Mask opacity in % (stored ×10 like the other sliders)
+        opacity_col, self.mask_opacity_slider, self.mask_opacity_val_lbl = create_enh_column(
+            "MASK OPACITY (%)", 0, 1000, int(self._mask_opacity * 1000), self._on_mask_opacity_changed
+        )
+
         row2_layout.addWidget(width_ax_col)
         row2_layout.addWidget(width_sag_col)
         row2_layout.addWidget(width_cor_col)
+        row2_layout.addWidget(opacity_col)
         
         container_layout.addLayout(row1_layout)
         container_layout.addLayout(row2_layout)
@@ -878,6 +885,12 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
             self.denoise_str_val_lbl.setText(f"{self._denoise_strength:.1f}")
         if self._denoise_on:
             self._invalidate_enhancement_cache()
+
+    def _on_mask_opacity_changed(self, value: int) -> None:
+        """Handle VOI mask opacity change."""
+        self._mask_opacity = value / 1000.0
+        self.mask_opacity_val_lbl.setText(f"{value / 10.0:.1f}")
+        self._refresh_frames()
 
     def _on_width_axial_changed(self, value: int) -> None:
         """Handle axial width scale change."""
@@ -1116,6 +1129,11 @@ class DrawVOIWidget(QWidget, BaseViewMixin):
         # Mask needs transpose for correct orientation to match the image slice
         if plane_ix == 0:
             arr = np.transpose(arr, (1, 0, 2))  # Transpose for axial plane
+        # The red VOI fill is the only pure-red overlay (box borders are
+        # yellow/orange/cyan); show it at the user's chosen opacity
+        arr = arr.copy()
+        voi = (arr[..., 3] > 0) & (arr[..., 1] == 0) & (arr[..., 2] == 0)
+        arr[voi, 3] = int(round(self._mask_opacity * 255))
         return arr
 
     def _get_plane_indices(self, plane_ix: int) -> Tuple[int]:

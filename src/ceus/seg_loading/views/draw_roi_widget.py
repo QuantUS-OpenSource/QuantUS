@@ -283,6 +283,18 @@ class DrawROIWidget(QWidget, BaseViewMixin):
             self.width_val_lbl.setText(f"{self._width_scale:.1f}")
         self._update_aspect_ratio()
 
+    def _on_roi_opacity_changed(self, value: int) -> None:
+        """Set the opacity of the ROI outline and tracked box on both panels."""
+        self.roi_opacity_val_lbl.setText(f"{value / 10.0:.1f}")
+        if self._roi_plot_artist is None:
+            return
+        artists = [self._roi_plot_artist[0], self._mc_box_artist[0]]
+        if self._bmode_image_data is not None:
+            artists += [self._ce_roi_artist, self._ce_mc_box_artist]
+        for artist in artists:
+            artist.set_alpha(value / 1000.0)
+        self._frame_update_pending = True
+
     def _update_aspect_ratio(self) -> None:
         """Update the aspect ratio of the main axes based on width scale."""
         if not hasattr(self, '_ax') or self._ax is None:
@@ -343,6 +355,12 @@ class DrawROIWidget(QWidget, BaseViewMixin):
         )
         
         container_layout.addWidget(width_col)
+
+        # ROI outline / tracked box opacity in % (stored ×10 like the width slider)
+        opacity_col, self.roi_opacity_slider, self.roi_opacity_val_lbl = create_enh_column(
+            "ROI OPACITY (%)", 0, 1000, 1000, self._on_roi_opacity_changed
+        )
+        container_layout.addWidget(opacity_col)
 
         # Add to the layout below the frame slider
         self._ui.side_bar_layout.addWidget(enh_group)
