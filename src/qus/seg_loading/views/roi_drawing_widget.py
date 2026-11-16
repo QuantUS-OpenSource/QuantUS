@@ -303,7 +303,6 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         ]
         self._draw_types_objects = [
             'draw_rect_drag_type_button', 'draw_freehand_drag_type_button', 'draw_pts_type_button',
-            'draw_fan_type_button',
         ]
         self._draw_freehand_drag_objects = [
             'back_from_drag_button', 'save_drag_button',
@@ -349,7 +348,9 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         # shape when the display has been scan-converted away from that raw rectangle. Linear
         # probes already have display space == raw space, so the existing rectangle mode
         # already does the equivalent job for them.
-        if self._image_data.sc_bmode is None:
+        if self._image_data.sc_bmode is not None:
+            self._draw_types_objects.append('draw_fan_type_button')
+        else:
             self._ui.draw_fan_type_button.hide()
 
         self._hide_draw_fan()
