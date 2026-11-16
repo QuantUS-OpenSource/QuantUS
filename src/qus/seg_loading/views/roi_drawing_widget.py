@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QFileDialog, QSlider, QLabel, 
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.seg_loading.ui.roi_drawing_ui import Ui_constructRoi
 from engines.qus.quantus.data_objs import UltrasoundRfImage
+from engines.qus.quantus.image_loading.utc_loaders.transforms import scanConvert
 
 
 class RoiDrawingWidget(QWidget, BaseViewMixin):
@@ -75,7 +76,8 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         # Only meaningful when self._image_data.sc_bmode is not None (scan-converted probes).
         self._fan_beam_bounds: Optional[tuple] = None    # (beam_min, beam_max), raw indices
         self._fan_sample_bounds: Optional[tuple] = None  # (sample_min, sample_max), raw indices
-        
+        self._fan_sector_mask: Optional[np.ndarray] = None  # True inside the imaged sector
+
         # DICOM overlay control variables
         self._dicom_overlay_checkbox: Optional[QCheckBox] = None
         self._transparency_slider: Optional[QSlider] = None
@@ -890,6 +892,21 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         self._cid_motion = self._ax.figure.canvas.mpl_connect('motion_notify_event', on_motion)
         self._cid_release = self._ax.figure.canvas.mpl_connect('button_release_event', on_release)
 
+    def _compute_fan_sector_mask(self) -> np.ndarray:
+        """
+        Boolean mask over the scan-converted display: True inside the imaged sector.
+        """
+        xmap = self._image_data.xmap
+        ones = np.ones((self._fan_n_samples, self._fan_n_beams), dtype=np.float32)
+        sc_ones = scanConvert(ones, self._image_data.width, self._image_data.tilt,
+                              self._image_data.start_depth, self._image_data.end_depth,
+                              desiredHeight=xmap.shape[0])[0].scArr
+        if sc_ones.shape != xmap.shape:
+            print(f"[QuantUS] Warning: sector mask shape {sc_ones.shape} != xmap shape {xmap.shape}; "
+                  "using approximate mask")
+            return (xmap != 0) | (self._image_data.ymap != 0)
+        return sc_ones > 0
+
     def _on_draw_fan(self) -> None:
         """Handle fan (sector) ROI drawing button click.
 
@@ -913,6 +930,7 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
         else:
             self._fan_n_samples, self._fan_n_beams = rf_shape[0], rf_shape[1]
 
+        self._fan_sector_mask = self._compute_fan_sector_mask()
         self._update_fan()
 
         def on_press(event):
@@ -922,6 +940,8 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
             ymap = self._image_data.ymap
             y_idx = int(np.clip(round(event.ydata), 0, xmap.shape[0] - 1))
             x_idx = int(np.clip(round(event.xdata), 0, xmap.shape[1] - 1))
+            if not self._fan_sector_mask[y_idx, x_idx]:
+                return
             beam = int(xmap[y_idx, x_idx])
             sample = int(ymap[y_idx, x_idx])
 
@@ -983,7 +1003,8 @@ class RoiDrawingWidget(QWidget, BaseViewMixin):
 
         xmap = self._image_data.xmap
         ymap = self._image_data.ymap
-        membership = ((xmap >= beam_min) & (xmap <= beam_max) &
+        membership = (self._fan_sector_mask &
+                      (xmap >= beam_min) & (xmap <= beam_max) &
                       (ymap >= sample_min) & (ymap <= sample_max)).astype(np.uint8)
 
         contours, _ = cv2.findContours(membership, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
