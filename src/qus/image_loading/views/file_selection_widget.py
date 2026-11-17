@@ -4,8 +4,16 @@ File Selection Widget for Image Loading
 
 import os
 from typing import Optional
-from PyQt6.QtWidgets import QWidget, QFileDialog, QTableWidgetItem, QHeaderView
+from PyQt6.QtWidgets import QWidget, QFileDialog, QTableWidgetItem, QHeaderView, QPushButton
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+
+# Several reference-phantom files are shown in one line edit, separated by this.
+PHANTOM_PATH_SEPARATOR = "; "
+
+
+def split_phantom_paths(text: str) -> list:
+    """Phantom line-edit text -> list of paths (one or more, separated by ';')."""
+    return [p.strip().strip('"') for p in text.split(";") if p.strip().strip('"')]
 
 
 from src.qus.mvc.base_view import BaseViewMixin
@@ -22,7 +30,7 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
     """
     
     # Signals for communicating with controller
-    files_selected = pyqtSignal(dict)  # {'image_path': str, 'phantom_path': str, 'scan_loader_kwargs': dict}
+    files_selected = pyqtSignal(dict)  # {'image_path': str, 'phantom_path': str | list[str], 'scan_loader_kwargs': dict}
     back_requested = pyqtSignal()
     close_requested = pyqtSignal()
 
@@ -51,10 +59,19 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         self._ui.full_screen_layout.setStretchFactor(self._ui.side_bar_layout, 1)
         self._ui.full_screen_layout.setStretchFactor(self._ui.img_selection_layout, 6)
         
+        # "Choose Folder" for the phantom: a reference folder (e.g. capture_1..capture_N
+        # subfolders) is searched by the scan loader for every capture. Styled like its neighbours.
+        self._choose_phantom_folder_button = QPushButton("Choose Folder", self)
+        self._choose_phantom_folder_button.setMinimumSize(self._ui.choose_phantom_path_button.minimumSize())
+        self._choose_phantom_folder_button.setMaximumSize(self._ui.choose_phantom_path_button.maximumSize())
+        self._choose_phantom_folder_button.setStyleSheet(self._ui.choose_phantom_path_button.styleSheet())
+        self._ui.choosePhantomButtonsLayout.insertWidget(1, self._choose_phantom_folder_button)
+
         # Store widgets that should be disabled during loading
         self._loading_widgets = [
             self._ui.choose_image_path_button,
             self._ui.choose_phantom_path_button,
+            self._choose_phantom_folder_button,
             self._ui.clear_image_path_button,
             self._ui.clear_phantom_path_button,
             self._ui.generate_image_button,
@@ -64,7 +81,11 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         # Update labels to reflect selected scan type
         self._ui.select_data_label.setText(f"Select {self._scan_type_name} Files")
         self._ui.image_path_label.setText(f"Input Path to Image file\n ({', '.join(self._file_extensions)})")
-        self._ui.phantom_path_label.setText(f"Input Path to Phantom file\n ({', '.join(self._file_extensions)})")
+        self._ui.phantom_path_label.setText(f"Input Path(s) to Phantom file(s) or folder\n ({', '.join(self._file_extensions)}; "
+                                            "several files or a folder of captures are averaged)")
+        self._ui.phantom_path_input.setToolTip("One or more reference phantom files or folders, separated by ';'. "
+                                               "A folder is searched (including subfolders) for every capture. "
+                                               "Every frame of every file is averaged into the reference spectrum.")
 
         if len(self._loading_options):
             self._show_loading_options()
@@ -78,6 +99,7 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         """Connect UI signals to internal handlers."""
         self._ui.choose_image_path_button.clicked.connect(self._on_choose_image_path)
         self._ui.choose_phantom_path_button.clicked.connect(self._on_choose_phantom_path)
+        self._choose_phantom_folder_button.clicked.connect(self._on_choose_phantom_folder)
         self._ui.clear_image_path_button.clicked.connect(self._ui.image_path_input.clear)
         self._ui.clear_phantom_path_button.clicked.connect(self._ui.phantom_path_input.clear)
         self._ui.generate_image_button.clicked.connect(self._on_generate_image)
@@ -123,33 +145,45 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         self._select_file_helper(self._ui.image_path_input, self._file_extensions)
         
     def _on_choose_phantom_path(self) -> None:
-        """Handle phantom file selection."""
-        self._select_file_helper(self._ui.phantom_path_input, self._file_extensions)
-        
+        """Handle phantom file selection (one or more files)."""
+        self._select_file_helper(self._ui.phantom_path_input, self._file_extensions, multiple=True)
+
+    def _on_choose_phantom_folder(self) -> None:
+        """Pick a reference folder; the scan loader finds every capture inside it."""
+        folder = QFileDialog.getExistingDirectory(self, "Choose reference phantom folder")
+        if folder:
+            self._ui.phantom_path_input.setText(folder)
+
     def _on_generate_image(self) -> None:
         """Handle image generation request."""
         image_path = self._ui.image_path_input.text().strip()
-        phantom_path = self._ui.phantom_path_input.text().strip()
+        phantom_paths = split_phantom_paths(self._ui.phantom_path_input.text())
 
         if not image_path:
             self.show_error("Please select an image file")
             return
-        if not phantom_path:
+        if not phantom_paths:
             self.show_error("Please select a phantom file")
             return
         if not os.path.exists(image_path):
             self.show_error(f"Image file does not exist: {os.path.basename(image_path)}")
             return
-        if not os.path.exists(phantom_path):
-            self.show_error(f"Phantom file does not exist: {os.path.basename(phantom_path)}")
-            return
+        for phantom_path in phantom_paths:
+            if not os.path.exists(phantom_path):
+                self.show_error(f"Phantom file does not exist: {os.path.basename(phantom_path)}")
+                return
         if not image_path.endswith(tuple(self._file_extensions)):
             self.show_error(f"Image file must have one of the following extensions: {', '.join(self._file_extensions)}")
             return
-        if not phantom_path.endswith(tuple(self._file_extensions)):
-            self.show_error(f"Phantom file must have one of the following extensions: {', '.join(self._file_extensions)}")
+        for phantom_path in phantom_paths:
+            if not os.path.isdir(phantom_path) and not phantom_path.endswith(tuple(self._file_extensions)):
+                self.show_error(f"Phantom file {os.path.basename(phantom_path)} must have one of the following "
+                                f"extensions: {', '.join(self._file_extensions)}")
+                return
+        if len(set(os.path.normcase(os.path.abspath(p)) for p in phantom_paths)) < len(phantom_paths):
+            self.show_error("The same phantom file is selected more than once")
             return
-            
+
         self.clear_error()
         
         # Collect scan_loader_kwargs from loading options table
@@ -172,7 +206,7 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         
         self.files_selected.emit({
             'image_path': image_path,
-            'phantom_path': phantom_path,
+            'phantom_path': phantom_paths[0] if len(phantom_paths) == 1 else phantom_paths,
             'scan_loader_kwargs': scan_loader_kwargs
         })
         
@@ -181,30 +215,42 @@ class FileSelectionWidget(QWidget, BaseViewMixin):
         self.clear_error()
         self.back_requested.emit()
         
-    def _select_file_helper(self, path_input, file_exts: list) -> None:
+    def _select_file_helper(self, path_input, file_exts: list, multiple: bool = False) -> None:
         """
         Helper method for file selection dialogs.
-        
+
         Args:
             path_input: QLineEdit widget to update with selected path
             file_exts: List of file extensions for filtering
+            multiple: allow selecting several files (joined with PHANTOM_PATH_SEPARATOR)
         """
-        # Check if file path is manually typed and exists
-        if os.path.exists(path_input.text()):
+        # Check if file path(s) are manually typed and exist
+        typed = split_phantom_paths(path_input.text()) if multiple else [path_input.text()]
+        if typed and all(os.path.exists(p) for p in typed):
             return
-        
+
         # Create filter string
         if file_exts:
             filter_str = " ".join([f"*{ext}" for ext in file_exts])
         else:
             filter_str = "All Files (*)"
             
+        if multiple:
+            file_names, _ = QFileDialog.getOpenFileNames(
+                self,
+                "Open File(s) - select several to average",
+                filter=filter_str
+            )
+            if file_names:
+                path_input.setText(PHANTOM_PATH_SEPARATOR.join(file_names))
+            return
+
         file_name, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Open File", 
+            self,
+            "Open File",
             filter=filter_str
         )
-        
+
         if file_name:
             path_input.setText(file_name)
 

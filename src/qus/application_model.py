@@ -7,7 +7,7 @@ replacing the individual models for each component.
 
 import os
 import numpy as np
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -36,7 +36,7 @@ class ScanLoadingWorker(QThread):
     finished = pyqtSignal(UltrasoundRfImage)
     error_msg = pyqtSignal(str)
 
-    def __init__(self, scan_type: str, image_path: str, phantom_path: str, scan_loader_kwargs: Dict[str, Any]):
+    def __init__(self, scan_type: str, image_path: str, phantom_path: Union[str, List[str]], scan_loader_kwargs: Dict[str, Any]):
         super().__init__()
         self.scan_type = scan_type
         self.image_path = image_path
@@ -418,13 +418,13 @@ class ApplicationModel(BaseModel):
             self._emit_error(f"Error getting compatible visualization functions: {e}")
             return []
 
-    def load_image(self, image_path: str, phantom_path: str = "", scan_loader_kwargs: Dict[str, Any] = None) -> None:
+    def load_image(self, image_path: str, phantom_path: Union[str, List[str]] = "", scan_loader_kwargs: Dict[str, Any] = None) -> None:
         """
         Load scan image data.
         
         Args:
             image_path: Path to image file
-            phantom_path: Path to phantom file (optional)
+            phantom_path: Path to phantom file, or a list of them (reference spectra averaged over all)
             scan_loader_kwargs: Additional loader arguments (optional)
         """
         if not self._selected_scan_type:
@@ -496,10 +496,12 @@ class ApplicationModel(BaseModel):
             return False
         
         phantom_path = input_data.get('phantom_path', '')
-        if phantom_path and phantom_path.strip() and not os.path.exists(phantom_path):
-            self._emit_error(f"Phantom file not found: {phantom_path}")
-            return False
-        
+        phantom_paths = [phantom_path] if isinstance(phantom_path, str) else list(phantom_path or [])
+        for path in phantom_paths:
+            if path and path.strip() and not os.path.exists(path):
+                self._emit_error(f"Phantom file not found: {path}")
+                return False
+
         return True
     
     def _on_image_loading_complete(self, image_data: UltrasoundRfImage) -> None:

@@ -67,7 +67,10 @@ class SpectrumCheckWidget(QWidget, BaseViewMixin):
         self._n_frames = rf.shape[0] if rf.ndim == 3 else 1
         self._frame = 0
         ref = image_data.phantom_rf_data
-        self._reference_rf = ref[0] if ref.ndim == 3 else ref
+        self._reference_rf = ref[0] if ref.ndim == 3 else ref  # displayed (first frame); ROI drawn on it
+        # every reference frame of every phantom file -> averaged reference spectrum (same ROI)
+        get_frames = getattr(image_data, "get_phantom_frames", None)
+        self._reference_frames = get_frames() if get_frames is not None else self._reference_rf[None]
 
         self._sample_roi = default_roi(self._sample_frame().shape)
         self._reference_roi = default_roi(self._reference_rf.shape)
@@ -261,7 +264,7 @@ class SpectrumCheckWidget(QWidget, BaseViewMixin):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                self._result = compare_spectra(self._sample_frame(), self._reference_rf, fs,
+                self._result = compare_spectra(self._sample_frame(), self._reference_frames, fs,
                                                self._sample_roi, self._reference_roi,
                                                cutoff_db=self._cutoff_spin.value())
         except Exception as e:  # e.g. a degenerate ROI

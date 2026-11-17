@@ -39,6 +39,13 @@ class CustomParamsWidget(QWidget, BaseViewMixin):
         self._setup_ui()
         self._connect_signals()
 
+        # Sampling frequency (and the Nyquist transducer band) from the scan file when the loader
+        # knows it (e.g. Clarius rf.yml); the analysis rejects a config that disagrees with it.
+        file_fs = getattr(image_data, "sampling_frequency", None)
+        if file_fs:
+            self.prefill_frequencies(sampling_frequency=file_fs)
+            self._sampling_freq.setToolTip(f"From the scan file: {file_fs / 1e6:g} MHz")
+
     def _setup_ui(self) -> None:
         """Setup the user interface."""
         self._ui.setupUi(self)
