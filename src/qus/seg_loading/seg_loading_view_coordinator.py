@@ -55,7 +55,8 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self._roi_drawing_widget: Optional[RoiDrawingWidget] = None
         self._voi_drawing_widget: Optional[VoiDrawingWidget] = None
         self._roi_preview_widget: Optional[RoiPreviewWidget] = None
-        
+        self._power_roi_widget = None  # Power Guided ROI Selection (src.qus.window_roi)
+
         # Current state
         self._selected_seg_type: Optional[str] = None
         self._seg_data: Optional[BmodeSeg] = None
@@ -118,15 +119,19 @@ class SegLoadingViewCoordinator(QStackedWidget):
         widgets_to_remove = [
             self._seg_file_widget,
             self._frame_selection_widget,
-            self._roi_drawing_widget, 
+            self._roi_drawing_widget,
             self._voi_drawing_widget,
-            self._roi_preview_widget
+            self._roi_preview_widget,
+            self._power_roi_widget,
         ]
-        
+
         for widget in widgets_to_remove:
             if widget:
+                if hasattr(widget, "shutdown"):
+                    widget.shutdown()  # wait for running computations before deleting
                 self.removeWidget(widget)
                 widget.deleteLater()
+        self._power_roi_widget = None
         
         # Reset widget references
         self._seg_file_widget = None
@@ -207,6 +212,19 @@ class SegLoadingViewCoordinator(QStackedWidget):
         self.addWidget(self._roi_drawing_widget)
         self.setCurrentWidget(self._roi_drawing_widget)
         
+    def show_power_guided_roi(self) -> None:
+        """Show Power Guided ROI Selection: correlation-length windows -> first-pass power check ->
+        ROI drawn with a live band check. The accepted ROI is saved as a QuantUS ROI pickle and
+        loaded like a hand-drawn ROI (pkl_roi), which opens the preview."""
+        from src.qus.window_roi.views.window_roi_widget import WindowRoiWidget
+
+        if self._power_roi_widget is None:
+            self._power_roi_widget = WindowRoiWidget(self._image_data)
+            self._power_roi_widget.roi_accepted.connect(self._on_file_selected)
+            self._power_roi_widget.back_requested.connect(self.reset_to_seg_type_selection)
+            self.addWidget(self._power_roi_widget)
+        self.setCurrentWidget(self._power_roi_widget)
+
     def show_voi_drawing(self) -> None:
         """Show the VOI drawing widget for manual VOI creation."""
         # Create VOI drawing widget
@@ -324,7 +342,9 @@ class SegLoadingViewCoordinator(QStackedWidget):
     def _on_preview_back(self) -> None:
         """Handle back request from preview widget."""
         # Go back to file selection or ROI drawing depending on workflow
-        if self._roi_drawing_widget:
+        if self._power_roi_widget:
+            self.setCurrentWidget(self._power_roi_widget)
+        elif self._roi_drawing_widget:
             self.setCurrentWidget(self._roi_drawing_widget)
         elif self._voi_drawing_widget:
             self.setCurrentWidget(self._voi_drawing_widget)

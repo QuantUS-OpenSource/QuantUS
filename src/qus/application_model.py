@@ -28,6 +28,7 @@ from engines.qus.quantus.entrypoints import (
 )
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
+from src.qus.window_roi import POWER_GUIDED_ROI, power_guided_roi_supported
 from engines.qus.quantus.power_spectrum import SpectrumBandwidth, apply_bandwidth_to_config
 
 
@@ -554,6 +555,8 @@ class ApplicationModel(BaseModel):
         
         names = [s.replace("_", " ").capitalize() for s in self._seg_loaders.keys()]
         names.append("Manual Segmentation")
+        if self._image_data is not None and power_guided_roi_supported(self._image_data):
+            names.append(POWER_GUIDED_ROI)
         return names
     
     @property
@@ -577,6 +580,10 @@ class ApplicationModel(BaseModel):
             bool: True if successfully set, False otherwise
         """
         try:
+            if seg_type_display_name == POWER_GUIDED_ROI:
+                # the power-guided ROI is saved as a QuantUS ROI pickle, like a hand-drawn ROI
+                self._selected_seg_type = "pkl_roi"
+                return True
             if seg_type_display_name == "Manual Segmentation":
                 if self._image_data.spatial_dims == 2:
                     self._selected_seg_type = "pkl_roi"

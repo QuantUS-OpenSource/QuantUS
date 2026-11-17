@@ -8,6 +8,7 @@ from src.qus.mvc.base_controller import BaseController
 from ..application_model import ApplicationModel
 from .seg_loading_view_coordinator import SegLoadingViewCoordinator
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg
+from src.qus.window_roi import POWER_GUIDED_ROI
 
 
 class SegmentationLoadingController(BaseController):
@@ -81,7 +82,10 @@ class SegmentationLoadingController(BaseController):
         """
         success = self.model.set_seg_type(seg_type_name)
         if success:
-            if seg_type_name == "Manual Segmentation":
+            if seg_type_name == POWER_GUIDED_ROI:
+                # correlation-length windows -> first-pass power check -> ROI with band check
+                self._view.show_power_guided_roi()
+            elif seg_type_name == "Manual Segmentation":
                 # Show ROI drawing interface for manual segmentation
                 image_data = self.model.image_data
                 if image_data.spatial_dims == 2:

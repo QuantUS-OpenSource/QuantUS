@@ -20,6 +20,10 @@ from src.qus.export_loading.export_loading_controller import ExportLoadingContro
 from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 
+# Spectrum Check step (Yuanshan Wu) between image loading and segmentation. Turned off on
+# whitson-dev while an alternative is built; the step's code is unchanged, set True to show it.
+SHOW_SPECTRUM_CHECK = False
+
 
 class ApplicationController(QObject):
     """
@@ -171,7 +175,7 @@ class ApplicationController(QObject):
         if self._spectrum_check_controller:
             self._cleanup_spectrum_check()
 
-        if not spectrum_check_supported(image_data):
+        if not SHOW_SPECTRUM_CHECK or not spectrum_check_supported(image_data):
             self._model.set_spectrum_band(None, None)
             self._initialize_segmentation_loading(image_data)
             return
