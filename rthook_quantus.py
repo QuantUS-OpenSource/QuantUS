@@ -1,6 +1,11 @@
 import sys
 import os
 
+try:
+    import cv2
+except Exception:
+    pass
+    
 if hasattr(sys, '_MEIPASS'):
     bad = [p for p in sys.path
            if 'engines' in p.replace('\\', '/').lower()

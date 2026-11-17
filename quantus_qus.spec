@@ -2,7 +2,7 @@
 # Run with:  python -m PyInstaller quantus_qus.spec --clean --noconfirm
 
 import sys
-from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata, collect_dynamic_libs
 
 block_cipher = None
 
@@ -45,6 +45,15 @@ for pkg in _COLLECT_ALL:
         all_hiddenimports += h
     except Exception as e:
         print(f"[spec] WARNING: collect_all({pkg!r}) failed: {e}")
+
+all_binaries += collect_dynamic_libs("PyQt6")
+
+import os
+_qt_plugins = os.path.join(
+    os.path.dirname(__import__('PyQt6').__file__),
+    'Qt6', 'plugins'
+)
+all_datas += [(_qt_plugins, 'PyQt6/Qt6/plugins')]
 
 for pkg in _COPY_META:
     try:
@@ -179,13 +188,13 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,                # don't UPX — breaks VTK/Qt binaries
-    console=True,            # no black terminal window
+    upx=False,                
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file=None,
+    entitlements_file="entitlements.plist" if sys.platform == "darwin" else None,
     icon="Images/logo.ico" if sys.platform == "win32" else (
          "Images/logo.icns" if sys.platform == "darwin" else None
     ),
@@ -212,5 +221,6 @@ if sys.platform == "darwin":
             "NSHighResolutionCapable": "True",
             "NSRequiresAquaSystemAppearance": "False",   # respect dark mode
             "CFBundleShortVersionString": "0.1.0",
+            "NSPrincipalClass": "NSApplication",    
         },
     )
