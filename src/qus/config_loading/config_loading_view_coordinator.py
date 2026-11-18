@@ -16,6 +16,7 @@ from .views.config_file_selection_widget import ConfigFileSelectionWidget
 from .views.custom_params_widget import CustomParamsWidget
 from .views.config_preview_widget import ConfigPreviewWidget
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from src.qus.window_roi import POWER_CORRELATION_GUIDED
 
 
 class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
@@ -52,6 +53,7 @@ class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self._custom_params_widget: Optional[CustomParamsWidget] = None
         self._frequency_prefill: dict = {}  # from the spectrum check step, applied to the Custom form
         self._config_preview_widget: Optional[ConfigPreviewWidget] = None
+        self._power_config_widget = None  # Power and Correlation Guided (src.qus.window_roi)
         self._input_file_extensions: List[str] = []
         
         # Current state
@@ -169,6 +171,22 @@ class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self.setCurrentWidget(self._custom_params_widget)
         self._custom_params_widget.clear_error()
 
+    def show_power_correlation_guided(self, roi_info) -> None:
+        """Show the Power and Correlation Guided page (multitaper spectra over the Power Guided ROI);
+        accepting it creates a Custom config. roi_info: load_roi_pkl_info of the loaded ROI, or None."""
+        from src.qus.window_roi.views.spectral_estimation_page import SpectralEstimationPage
+        if self._power_config_widget is None:
+            self._power_config_widget = SpectralEstimationPage(self._image_data, roi_info)
+            self._power_config_widget.params_accepted.connect(self._on_custom_params_configured)
+            self._power_config_widget.back_requested.connect(self.show_config_type_selection)
+            self.addWidget(self._power_config_widget)
+        self.setCurrentWidget(self._power_config_widget)
+
+    def shutdown(self) -> None:
+        """Stop any running Power and Correlation Guided computation (it finishes in the background)."""
+        if self._power_config_widget is not None:
+            self._power_config_widget.shutdown()
+
     def set_frequency_prefill(self, analysis_band=None, center_frequency=None, sampling_frequency=None) -> None:
         """Frequencies (Hz) to pre-fill the Custom config form with."""
         self._frequency_prefill = {k: v for k, v in dict(analysis_band=analysis_band, center_frequency=center_frequency,
@@ -247,6 +265,8 @@ class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         # Go back to config type selection (analysis configuration loading menu)
         if self._selected_config_type == "Custom":
             self.show_custom_params()
+        elif self._selected_config_type == POWER_CORRELATION_GUIDED and self._power_config_widget is not None:
+            self.setCurrentWidget(self._power_config_widget)
         else:
             if len(self._input_file_extensions):
                 self.show_file_selection(self._input_file_extensions, self._loading_options, self._default_option_vals)

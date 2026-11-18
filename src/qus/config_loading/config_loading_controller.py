@@ -11,6 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from src.qus.mvc.base_controller import BaseController
 from src.qus.config_loading.config_loading_view_coordinator import ConfigLoadingViewCoordinator
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from src.qus.window_roi import POWER_CORRELATION_GUIDED
 
 
 
@@ -132,6 +133,12 @@ class ConfigLoadingController(BaseController):
             if config_type == "Custom":
                 # For custom option: go to custom analysis menu
                 self._view_coordinator.show_custom_params()
+            elif config_type == POWER_CORRELATION_GUIDED:
+                # multitaper spectra over the Power Guided ROI -> Custom config (src.qus.window_roi)
+                from engines.qus.quantus.seg_loading.correlation_length.roi import load_roi_pkl_info
+                seg_path = getattr(self._model, 'seg_path', None)
+                self._view_coordinator.show_power_correlation_guided(
+                    load_roi_pkl_info(seg_path) if seg_path else None)
             else:
                 file_extensions = self._model.get_config_file_extensions()
                 loading_options, default_vals = self._model.get_config_loading_options()
@@ -249,4 +256,6 @@ class ConfigLoadingController(BaseController):
         
     def cleanup(self) -> None:
         """Clean up resources."""
-        self.model.cleanup() 
+        if self._view_coordinator:
+            self._view_coordinator.shutdown()   # disconnect a running Power and Correlation Guided computation
+        self.model.cleanup()

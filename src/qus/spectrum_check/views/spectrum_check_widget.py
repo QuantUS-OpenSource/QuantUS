@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 
 from src.qus.mvc.base_view import BaseViewMixin
 from engines.qus.quantus.data_objs import UltrasoundRfImage
-from engines.qus.quantus.power_spectrum.spectrum import compare_spectra, default_roi, DISPLAY_FLOOR_DB
+from engines.qus.quantus.seg_loading.power_spectrum.spectrum import compare_spectra, default_roi, DISPLAY_FLOOR_DB
 
 BG = (42 / 255, 42 / 255, 42 / 255)
 DISPLAY_DYNAMIC_RANGE_DB = 50.0
@@ -48,7 +48,7 @@ def _style_axes(ax) -> None:
 
 class SpectrumCheckWidget(QWidget, BaseViewMixin):
     """
-    Sample / reference ROI power-spectrum comparison (see quantus.power_spectrum).
+    Sample / reference ROI power-spectrum comparison (see quantus.seg_loading.power_spectrum).
 
     ROIs are drawn on the pre-scan-conversion B-mode, so for sector probes the rectangle is a
     beam x depth region, which is the region the spectrum is actually computed over.

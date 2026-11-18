@@ -15,10 +15,10 @@ from PyQt6.QtWidgets import (
     QComboBox,
 )
 
-from engines.qus.quantus.correlation_length import (
+from engines.qus.quantus.seg_loading.correlation_length import (
     NyquistError, calc_first_pass_from_image, intersect_first_pass, positions_from_image,
 )
-from engines.qus.quantus.correlation_length.roi import check_sector_roi, save_roi_pkl, sector_roi_from_box
+from engines.qus.quantus.seg_loading.correlation_length.roi import check_sector_roi, save_roi_pkl, sector_roi_from_box
 from src.qus.window_roi import POWER_GUIDED_ROI
 from .common import (
     BG, MUTED, ROI, SIDEBAR_WIDTH, TEXT, UNUSABLE, USABLE, Worker, bmode_db, error_label, first_frame, heading,
@@ -42,6 +42,7 @@ class RoiBandPage(QWidget):
         self._roi = None
         self._roi_extents = None
         self._windows = None
+        self.correlation_settings: Optional[dict] = None   # correlation page settings, saved with the ROI
         self._job = None   # settings of the first pass that is running / last ran
         self._worker: Optional[Worker] = None
         self._selector: Optional[RectangleSelector] = None
@@ -339,6 +340,7 @@ class RoiBandPage(QWidget):
             path = save_roi_pkl(target, self._image, roi, frame=0, extra={
                 "First Pass Window mm": (s.window_length_mm, s.block_width_mm),
                 "First Pass Block Lines": s.block_lines,
+                "Correlation Settings": dict(self.correlation_settings or {}),
             })
         except Exception as e:
             self._error.setText(f"Could not save the ROI: {e}")

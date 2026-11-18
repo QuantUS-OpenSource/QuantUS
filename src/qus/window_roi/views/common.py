@@ -46,7 +46,7 @@ def style_legend(legend) -> None:
 
 def bmode_db(rf_2d: np.ndarray, dynamic_range_db: float = 60.0) -> np.ndarray:
     """Log-compressed Hilbert envelope (dB re max, clipped to the dynamic range) of one RF frame."""
-    from engines.qus.quantus.correlation_length.correlation import envelope_frames
+    from engines.qus.quantus.seg_loading.correlation_length.correlation import envelope_frames
 
     env = envelope_frames(np.asarray(rf_2d, dtype=float)[None])[0]
     with np.errstate(divide="ignore"):
@@ -99,7 +99,7 @@ def stop_worker(worker) -> None:
     """Disconnect a Worker so its result is ignored (it finishes in the background)."""
     if worker is None:
         return
-    for sig in (worker.done, worker.failed):
+    for sig in (worker.done, worker.failed, worker.progress):
         try:
             sig.disconnect()
         except TypeError:
@@ -124,10 +124,12 @@ class Worker(QThread):
 
     done = pyqtSignal(object)
     failed = pyqtSignal(object)
+    progress = pyqtSignal(float, str)   # fraction 0-1, message (with_progress=True)
 
-    def __init__(self, fn: Callable, parent=None):
+    def __init__(self, fn: Callable, parent=None, with_progress: bool = False):
         super().__init__(None)
         self._fn = fn
+        self._with_progress = with_progress
         self.finished.connect(lambda: _RUNNING.discard(self))
 
     def start(self, *args) -> None:
@@ -148,6 +150,6 @@ class Worker(QThread):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
-                self.done.emit(self._fn())
+                self.done.emit(self._fn(self.progress.emit) if self._with_progress else self._fn())
         except Exception as e:  # reported in the page
             self.failed.emit(e)

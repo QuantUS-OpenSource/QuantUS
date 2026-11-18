@@ -28,8 +28,8 @@ from engines.qus.quantus.entrypoints import (
 )
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
-from src.qus.window_roi import POWER_GUIDED_ROI, power_guided_roi_supported
-from engines.qus.quantus.power_spectrum import SpectrumBandwidth, apply_bandwidth_to_config
+from src.qus.window_roi import POWER_CORRELATION_GUIDED, POWER_GUIDED_ROI, power_guided_roi_supported
+from engines.qus.quantus.seg_loading.power_spectrum import SpectrumBandwidth, apply_bandwidth_to_config
 
 
 class ScanLoadingWorker(QThread):
@@ -565,6 +565,11 @@ class ApplicationModel(BaseModel):
         return self._selected_seg_type
     
     @property
+    def seg_path(self) -> Optional[str]:
+        """Path of the last segmentation file loaded (None before one is loaded)."""
+        return getattr(self, "_seg_path", None)
+
+    @property
     def seg_data(self) -> Optional[BmodeSeg]:
         """Get the currently loaded segmentation."""
         return self._seg_data
@@ -649,6 +654,7 @@ class ApplicationModel(BaseModel):
         if not os.path.exists(seg_path):
             self._emit_error(f"Segmentation file not found: {seg_path}")
             return
+        self._seg_path = seg_path   # the Power and Correlation Guided config reads a Power Guided ROI's details
         
         # Stop any existing worker
         if self._seg_worker and self._seg_worker.isRunning():
@@ -712,7 +718,10 @@ class ApplicationModel(BaseModel):
             return []
         
         names = [s.replace("_", " ").capitalize() for s in self._config_loaders.keys()]
-        return [s.replace("rf", "RF").replace("config", "Config") for s in names]
+        names = [s.replace("rf", "RF").replace("config", "Config") for s in names]
+        if "custom" in self._config_loaders and self._image_data is not None                 and power_guided_roi_supported(self._image_data):
+            names.append(POWER_CORRELATION_GUIDED)
+        return names
     
     @property
     def selected_config_type(self) -> Optional[str]:
@@ -739,6 +748,10 @@ class ApplicationModel(BaseModel):
             return False
         
         try:
+            if config_type_display_name == POWER_CORRELATION_GUIDED:
+                # the Power and Correlation Guided page fills in a Custom config
+                self._selected_config_type = "custom"
+                return True
             # Convert display name back to internal name
             loader_names = list(self._config_loaders.keys())
             display_names = self.config_loader_names

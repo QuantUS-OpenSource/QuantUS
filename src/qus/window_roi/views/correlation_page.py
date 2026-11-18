@@ -1,5 +1,5 @@
 """Page 1 of the Window Sizes & ROI step: speckle correlation lengths on the reference phantom ->
-recommended QUS window (quantus.correlation_length)."""
+recommended QUS window (quantus.seg_loading.correlation_length)."""
 
 from typing import Optional
 
@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QFrame, QComboBox, QDoubleSpinBox, QCheckBox, QPushButton,
 )
 
-from engines.qus.quantus.correlation_length import PROBE_PRESETS, correlation_lengths_from_image, positions_from_image
-from engines.qus.quantus.correlation_length.correlation import _central_region, _mround
+from engines.qus.quantus.seg_loading.correlation_length import PROBE_PRESETS, correlation_lengths_from_image, positions_from_image
+from engines.qus.quantus.seg_loading.correlation_length.correlation import _central_region, _mround
 from .common import (
     AXIAL, BG, LATERAL, MUTED, REGION, SIDEBAR_WIDTH, TEXT, Worker, bmode_db, error_label, first_frame, heading, hint,
     results_box, separator, stop_worker, style_axes, style_legend,
@@ -150,6 +150,10 @@ class CorrelationPage(QWidget):
         if frac is not None:
             self._fraction.setValue(100 * frac)
         self._compute()
+
+    def preset_name(self) -> Optional[str]:
+        name = self._preset.currentText()
+        return None if name == CUSTOM else name
 
     def settings(self) -> dict:
         return dict(window_length_mm=self._win_len.value(), window_width_mm=self._win_wid.value(),

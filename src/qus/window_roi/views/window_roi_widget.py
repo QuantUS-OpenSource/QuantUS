@@ -36,6 +36,8 @@ class WindowRoiWidget(QWidget, BaseViewMixin):
     def _to_roi_page(self, correlation) -> None:
         w = correlation.recommended_window()
         self._stack.setCurrentWidget(self._roi)
+        # saved with the ROI: the Power and Correlation Guided config re-measures inside the ROI with these
+        self._roi.correlation_settings = dict(self._correlation.settings(), preset=self._correlation.preset_name())
         self._roi.set_windows(w["ax_window_mm"], w["lat_window_mm"])
 
     def _on_accepted(self, data: dict) -> None:
