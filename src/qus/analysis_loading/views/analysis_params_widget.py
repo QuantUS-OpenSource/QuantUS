@@ -14,6 +14,12 @@ from PyQt6.QtCore import pyqtSignal, Qt, QTimer
 from src.qus.mvc.base_view import BaseViewMixin
 from src.qus.analysis_loading.ui.analysis_params_ui import Ui_analysisParams
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
+from engines.qus.quantus.reference_phantoms import get_reference_phantoms, ReferencePhantom
+
+CUSTOM_PHANTOM_LABEL = "Custom (enter values manually)"
+# Power-law attenuation is only meaningful when all three terms are on the form; a method that
+# takes `ref_atten` alone (e.g. bsc_single_freq, linear dB/cm/MHz) is left for manual entry.
+ATTEN_KWARGS = ("ref_atten", "ref_atten_exp", "ref_atten_offset")
 
 
 class AnalysisParamsWidget(QWidget, BaseViewMixin):
@@ -43,6 +49,8 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
         self._selected_functions: List[str] = []
         self._execution_widgets: List[QWidget] = []
         self._param_selection_widgets: List[QWidget] = []
+        self._phantom_combo: Optional[QComboBox] = None
+        self._phantom_filled: List[str] = []      # params currently locked to the selected phantom
 
         self._setup_ui()
         self._connect_signals()
@@ -90,7 +98,9 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
         # Clear existing inputs
         self._clear_params_layout()
         self._param_inputs.clear()
-        
+        self._phantom_combo = None
+        self._phantom_filled = []
+
         # Get the layout to add inputs to
         layout = self._ui.params_layout
 
@@ -115,10 +125,94 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
                 # Create a group box for related parameters
                 group_box = self._create_parameter_group(func_name, params)
                 layout.addWidget(group_box)
-        
+
+        # Reference phantom selector goes on top, once the fields it fills exist
+        phantom_group = self._create_phantom_group()
+        if phantom_group is not None:
+            layout.insertWidget(0, phantom_group)
+
         # Add stretch at the end
         layout.addStretch()
-        
+
+    def _phantom_fillable_values(self, phantom: ReferencePhantom) -> Dict[str, Any]:
+        """Values the phantom supplies for params present on this form."""
+        values = phantom.to_analysis_kwargs()
+        if not all(k in self._param_inputs for k in ATTEN_KWARGS):
+            for k in ATTEN_KWARGS:
+                values.pop(k, None)
+        return {k: v for k, v in values.items() if k in self._param_inputs}
+
+    def _create_phantom_group(self) -> Optional[QGroupBox]:
+        """Dropdown of library reference phantoms, shown when a selected method uses one."""
+        try:
+            self._phantoms = get_reference_phantoms()
+        except Exception as e:  # a malformed phantom.yaml must not break the params page
+            print(f"Error loading reference phantoms: {e}")
+            return None
+        if not any(self._phantom_fillable_values(p) for p in self._phantoms.values()):
+            return None
+
+        group_box = self._create_parameter_group("reference_phantom", {})
+        combo = QComboBox()
+        combo.addItem(CUSTOM_PHANTOM_LABEL, None)
+        for name, phantom in self._phantoms.items():
+            combo.addItem(phantom.display_name, name)
+        combo.setStyleSheet(self._get_input_style())
+        combo.currentIndexChanged.connect(self._on_phantom_changed)
+
+        self._phantom_info = QLabel("")
+        self._phantom_info.setWordWrap(True)
+        self._phantom_info.setStyleSheet("QLabel { color: rgb(200, 200, 200); font-size: 11px; "
+                                         "font-weight: normal; background-color: transparent; }")
+
+        form = group_box.layout()
+        label, _ = self._create_parameter_field("phantom", "")
+        form.addRow(label, combo)
+        form.addRow(self._phantom_info)
+        self._phantom_combo = combo
+        return group_box
+
+    def _on_phantom_changed(self, _index: int) -> None:
+        """Fill and lock the params the selected phantom provides; unlock them for Custom."""
+        for name in self._phantom_filled:
+            self._param_inputs[name].setEnabled(True)
+        self._phantom_filled = []
+
+        key = self._phantom_combo.currentData()
+        if key is None:
+            self._phantom_info.setText("")
+            return
+        phantom = self._phantoms[key]
+        for name, value in self._phantom_fillable_values(phantom).items():
+            if self._set_widget_value(self._param_inputs[name], value):
+                self._param_inputs[name].setEnabled(False)
+                self._phantom_filled.append(name)
+
+        info = [phantom.description.strip()] if phantom.description else []
+        if phantom.transmission_path is None and phantom.membrane_thickness_um is None \
+                and "cirs_mode" in self._param_inputs:
+            info.append("No membrane transmission data for this phantom: set Cirs Mode / Cirs Path manually.")
+        self._phantom_info.setText("\n".join(info))
+
+    @staticmethod
+    def _set_widget_value(widget: QWidget, value: Any) -> bool:
+        """Write a value into an input widget; False if this widget type can't hold it."""
+        try:
+            if isinstance(widget, QSpinBox):
+                widget.setValue(int(value))
+            elif isinstance(widget, QDoubleSpinBox):
+                widget.setValue(float(value))
+            elif isinstance(widget, QLineEdit):
+                widget.setText(f"{value:.6e}" if isinstance(value, float) and value != 0
+                               and not 1e-3 <= abs(value) < 1e4 else str(value))
+            elif isinstance(widget, QCheckBox):
+                widget.setChecked(bool(value))
+            else:
+                return False
+        except (TypeError, ValueError):
+            return False
+        return True
+
     def _create_parameter_group(self, group_name: str, params: List[str]) -> QGroupBox:
         """
         Create a group box for related parameters.
@@ -254,7 +348,7 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
     def _get_input_style(self) -> str:
         """Get common style for input widgets."""
         return """
-            QLineEdit, QDoubleSpinBox, QSpinBox, QTextEdit {
+            QLineEdit, QDoubleSpinBox, QSpinBox, QTextEdit, QComboBox {
                 background-color: rgb(80, 80, 80);
                 border: 2px solid rgb(120, 120, 120);
                 border-radius: 5px;
@@ -262,9 +356,14 @@ class AnalysisParamsWidget(QWidget, BaseViewMixin):
                 padding: 5px;
                 font-size: 11px;
             }
-            
-            QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus, QTextEdit:focus {
+
+            QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus, QTextEdit:focus, QComboBox:focus {
                 border-color: rgb(100, 150, 255);
+            }
+
+            QLineEdit:disabled, QDoubleSpinBox:disabled, QSpinBox:disabled {
+                background-color: rgb(60, 60, 60);
+                color: rgb(170, 170, 170);
             }
         """
         
