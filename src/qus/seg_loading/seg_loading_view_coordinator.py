@@ -215,7 +215,7 @@ class SegLoadingViewCoordinator(QStackedWidget):
     def show_power_guided_roi(self) -> None:
         """Show Power Guided ROI Selection: correlation-length windows -> first-pass power check ->
         ROI drawn with a live band check. The accepted ROI is saved as a QuantUS ROI pickle and
-        loaded like a hand-drawn ROI (pkl_roi), which opens the preview."""
+        loaded like a hand-drawn ROI (pkl_roi) and confirmed without the preview page."""
         from src.qus.window_roi.views.window_roi_widget import WindowRoiWidget
 
         if self._power_roi_widget is None:
@@ -261,7 +261,13 @@ class SegLoadingViewCoordinator(QStackedWidget):
         """Show the segmentation preview widget."""
         # Create preview widget
         self._current_seg_data = seg_data
-        
+
+        # Power Guided ROI: the ROI is already shown on the B-mode there, so skip the preview and
+        # confirm straight away (Back from config returns to the Power Guided ROI screen)
+        if self._power_roi_widget is not None and self.currentWidget() is self._power_roi_widget:
+            self._on_segmentation_confirmed(seg_data)
+            return
+
         if self._image_data.spatial_dims == 2:
             self._roi_preview_widget = RoiPreviewWidget(
                 seg_data,
@@ -297,17 +303,21 @@ class SegLoadingViewCoordinator(QStackedWidget):
     # USER ACTION HANDLING - Process user interactions and communicate with controller
     # ============================================================================
 
-    def _on_seg_type_selected(self, seg_type_name: str) -> None:
+    def _on_seg_type_selected(self, seg_type_name: str, include_spectrum_check: bool = False) -> None:
         """
         Handle segmentation type selection from the seg type widget.
         
         Args:
             seg_type_name: Selected segmentation type name
+            include_spectrum_check: route through the spectrum check after segmentation
         """
         self._selected_seg_type = seg_type_name
         
-        # Emit signal to controller
-        self._emit_user_action('seg_type_selected', seg_type_name)
+        # Emit signal to controller (and the application controller, which routes the spectrum check)
+        self._emit_user_action('seg_type_selected', {
+            'seg_type': seg_type_name,
+            'spectrum_check': include_spectrum_check,
+        })
     
     def _on_file_selected(self, file_data: dict) -> None:
         """

@@ -70,6 +70,12 @@ class ConfigLoadingController(BaseController):
         
         if self._view_coordinator:
             self._view_coordinator.set_config_loaders(loader_names)
+            # Power & Correlation Guided runs on any 2D ROI on the RF grid (a Power Guided ROI or not)
+            from src.qus.seg_spectrum_check import seg_bounding_roi
+            rf = getattr(self._image_data, 'rf_data', None)
+            frame_shape = None if rf is None else (rf.shape[1:] if rf.ndim == 3 else rf.shape)
+            self._view_coordinator.set_power_guided_roi(
+                frame_shape is not None and seg_bounding_roi(self._seg_data, frame_shape) is not None)
             
     def _on_user_action(self, action_name: str, action_data: Any) -> None:
         """

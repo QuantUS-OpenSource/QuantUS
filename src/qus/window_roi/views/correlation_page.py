@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 
 from engines.qus.quantus.seg_loading.correlation_length import PROBE_PRESETS, correlation_lengths_from_image, positions_from_image
 from engines.qus.quantus.seg_loading.correlation_length.correlation import _central_region, _mround
+from src.qus.window_roi.windows import WINDOW_MAX_DEPTH_MM, window_depth_range, window_over_depths
 from .common import (
     AXIAL, BG, LATERAL, MUTED, REGION, SIDEBAR_WIDTH, TEXT, Worker, bmode_db, error_label, first_frame, heading, hint,
     results_box, separator, stop_worker, style_axes, style_legend,
@@ -27,13 +28,16 @@ class CorrelationPage(QWidget):
 
     next_requested = pyqtSignal(object)   # CorrelationLengths
     back_requested = pyqtSignal()
+    computed = pyqtSignal(object)         # CorrelationLengths with a usable recommended window
+    failed = pyqtSignal(str)              # error / no recommended window
 
-    def __init__(self, image_data, parent: Optional[QWidget] = None):
+    def __init__(self, image_data, parent: Optional[QWidget] = None, preset: Optional[str] = None):
         super().__init__(parent)
         self._image = image_data
         self._result = None
         self._worker: Optional[Worker] = None
         self._pending = False
+        self._window_depths = None   # (top, bottom) mm the window is taken over (first-pass usable depths)
         self._gs = self._ax0 = None
         ref = first_frame(image_data.get_phantom_frames() if hasattr(image_data, "get_phantom_frames")
                           else image_data.phantom_rf_data)
@@ -41,7 +45,10 @@ class CorrelationPage(QWidget):
         self._bmode = bmode_db(ref)
         self._build_ui()
         self._set_custom_defaults()
-        self._compute()
+        if preset in PROBE_PRESETS:
+            self._preset.setCurrentText(preset)   # -> _on_preset -> _compute
+        else:
+            self._compute()
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
@@ -120,10 +127,14 @@ class CorrelationPage(QWidget):
         self._next_button.clicked.connect(lambda: self._result is not None and self.next_requested.emit(self._result))
         self._back_button.clicked.connect(self.back_requested.emit)
 
+    def _set_full_depth(self) -> None:
+        """Measure over the full depth of the image (windows still fit entirely inside it)."""
+        self._top.setValue(0.0)
+        self._bottom.setValue(self._bottom.maximum())
+
     def _set_custom_defaults(self) -> None:
         depth = float(np.nanmax(self._axial))
-        self._top.setValue(min(5.0, depth / 4))
-        self._bottom.setValue(depth)
+        self._set_full_depth()
         length = round(min(10.0, max(1.0, depth / 6)), 1)
         self._win_len.setValue(length)
         self._win_wid.setValue(length)
@@ -137,11 +148,8 @@ class CorrelationPage(QWidget):
         if name == CUSTOM:
             return
         p = PROBE_PRESETS[name]
-        top, bottom = p.get("depth_range_mm", (None, None))
-        if top is not None:
-            self._top.setValue(top)
-        if bottom is not None:
-            self._bottom.setValue(min(bottom, self._bottom.maximum()))
+        # depth range: always the full image depth, not the preset's (editable in the form)
+        self._set_full_depth()
         self._win_len.setValue(p["window_length_mm"])
         self._win_wid.setValue(p["window_width_mm"])
         self._threshold.setValue(p.get("threshold", 0.5))
@@ -150,6 +158,11 @@ class CorrelationPage(QWidget):
         if frac is not None:
             self._fraction.setValue(100 * frac)
         self._compute()
+
+    def set_dialog_mode(self) -> None:
+        """Shown inside the Adjust dialog of the Power Guided ROI screen, which has its own Done button."""
+        self._back_button.hide()
+        self._next_button.hide()
 
     def preset_name(self) -> Optional[str]:
         name = self._preset.currentText()
@@ -183,25 +196,66 @@ class CorrelationPage(QWidget):
             self._compute()
             return
         self._result = result
-        w = result.recommended_window()
+        w = self.recommended_window()
         ok = np.isfinite(w["ax_window_mm"]) and np.isfinite(w["lat_window_mm"])
         self._next_button.setEnabled(bool(ok))
+        self._show_window_text()
         if ok:
-            self._results.setText(
-                f"<b>Suggested Window Size for First Pass:</b><br>"
-                f"<b>Axial window</b>: {w['ax_window_mm']:.1f} mm ({w['ax_window_samples']:.0f} samples, "
-                f"max at {w['ax_mm_at_depth_mm']:.1f} mm)<br>"
-                f"<b>Lateral window</b>: {w['lat_window_mm']:.1f} mm (max at {w['lat_mm_at_depth_mm']:.1f} mm); "
-                f"{w['lat_window_lines']:.0f} A-lines (max at {w['lat_at_depth_mm']:.1f} mm)<br>"
-                f"<span style='color:{MUTED}'>{result._describe_data()}, depths "
-                f"{w['depth_range_mm'][0]:.1f}-{w['depth_range_mm'][1]:.1f} mm</span>")
+            self.computed.emit(result)
         else:
-            self._results.setText("No recommended window: the correlation never dropped below the threshold.")
+            self.failed.emit("No recommended window: the correlation never dropped below the threshold.")
         try:
             self._plot()
         except Exception as e:  # never let a plotting problem take down the app (exceptions in slots abort)
             self._error.setText(f"Could not draw the plots: {e}")
             self._error.show()
+
+    # ------------------------------------------------------------------ window over usable depths
+    def recommended_window(self) -> dict:
+        """The window: largest per-depth recommendation over the first-pass usable depths (if known),
+        cut at the preset's maximum window depth (WINDOW_MAX_DEPTH_MM)."""
+        return window_over_depths(self._result, window_depth_range(self._window_depths, self.preset_name()))
+
+    @property
+    def window_depths(self):
+        """First-pass usable depths (mm) the window is taken over, or None before the first pass."""
+        return self._window_depths
+
+    def set_window_depth_range(self, depth_range) -> None:
+        """Take the window only over these depths (mm), e.g. where the first pass finds signal."""
+        self._window_depths = None if depth_range is None else tuple(float(v) for v in depth_range)
+        if self._result is None:
+            return
+        self._show_window_text()
+        try:
+            self._plot()
+        except Exception as e:
+            self._error.setText(f"Could not draw the plots: {e}")
+            self._error.show()
+
+    def _show_window_text(self) -> None:
+        w = self.recommended_window()
+        if not (np.isfinite(w["ax_window_mm"]) and np.isfinite(w["lat_window_mm"])):
+            self._results.setText("No recommended window: the correlation never dropped below the threshold.")
+            return
+        lim = w.get("limited_to_mm")
+        cap = WINDOW_MAX_DEPTH_MM.get(self.preset_name())
+        if lim and self._window_depths is not None:
+            over = f"over the depths with usable first-pass signal, {max(lim[0], 0):.1f}-{lim[1]:.1f} mm"
+        elif lim:
+            over = f"over the measured depths down to {lim[1]:.1f} mm (first pass not run yet)"
+        else:
+            over = "over all measured depths (first pass not run yet)"
+        if cap is not None:
+            over += f"; {self.preset_name()} limit {cap:g} mm"
+        self._results.setText(
+            f"<b>Suggested Window Size for First Pass</b> ({over}):<br>"
+            f"<b>Axial window</b>: {w['ax_window_mm']:.1f} mm ({w['ax_window_samples']:.0f} samples, "
+            f"max at {w['ax_mm_at_depth_mm']:.1f} mm)<br>"
+            f"<b>Lateral window</b>: {w['lat_window_mm']:.1f} mm (max at {w['lat_mm_at_depth_mm']:.1f} mm); "
+            f"{w['lat_window_lines']:.0f} A-lines (max at {w['lat_at_depth_mm']:.1f} mm)<br>"
+            f"<span style='color:{MUTED}'>{self._result._describe_data()}, measured "
+            f"{w['depth_range_mm'][0]:.1f}-{w['depth_range_mm'][1]:.1f} mm</span>")
 
     def _on_failed(self, error) -> None:
         self._compute_button.setEnabled(True)
@@ -211,6 +265,7 @@ class CorrelationPage(QWidget):
         self._results.setText("")
         self._error.setText(str(error))
         self._error.show()
+        self.failed.emit(str(error))
 
     # ------------------------------------------------------------------ plots
     def _region_outline(self, r):
@@ -265,8 +320,15 @@ class CorrelationPage(QWidget):
             ax.tick_params(labelleft=False)
         axs[0].axvline(1, color=MUTED, linestyle=":", linewidth=1)
 
-        w = r.recommended_window()
+        w = self.recommended_window()
         ax = axs[2]
+        lim = w.get("limited_to_mm")
+        if lim:   # depths left out of the window (no usable first-pass signal / below the preset limit)
+            top_img, bottom_img = min(float(np.nanmin(self._axial)), 0.0), float(np.nanmax(self._axial))
+            for y0, y1 in ((top_img, max(lim[0], top_img)), (lim[1], bottom_img)):
+                if y1 > y0:
+                    ax.axhspan(y0, y1, color=MUTED, alpha=0.18, linewidth=0)
+            ax.plot([], [], color=MUTED, alpha=0.5, linewidth=6, label="Not used for window")
         ax.step(r.recommended_lat_window_mm, d, where="mid", color=LATERAL, linewidth=2,
                 label=f"Lateral ({r.lat_window_factor:g}x)")
         ax.step(r.recommended_ax_window_mm, d, where="mid", color=AXIAL, linewidth=2,

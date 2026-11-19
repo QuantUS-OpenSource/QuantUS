@@ -63,7 +63,10 @@ class SegmentationLoadingController(BaseController):
             action_data: Data associated with the action
         """
         if action_name == 'seg_type_selected':
-            self._handle_seg_type_selection(action_data)
+            # {'seg_type': display name, 'spectrum_check': bool}; the spectrum check flag is
+            # used by the application controller after segmentation
+            seg_type = action_data['seg_type'] if isinstance(action_data, dict) else action_data
+            self._handle_seg_type_selection(seg_type)
         elif action_name == 'frame_selected':
             self._view.show_roi_drawing(action_data)
         elif action_name == 'load_segmentation':

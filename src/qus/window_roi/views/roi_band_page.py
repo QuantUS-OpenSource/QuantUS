@@ -1,5 +1,6 @@
-"""Page 2 of the Window Sizes & ROI step: first-pass power check with the correlation-length window,
-then draw the ROI with a live band check (Python version of DrawROIWithBand.m)."""
+"""Power Guided ROI screen: first-pass power check with the correlation-length window, then draw the
+ROI with a live band check (Python version of DrawROIWithBand.m). The window comes from the
+correlation lengths (computed automatically; 'Adjust window sizes...' opens their settings)."""
 
 from pathlib import Path
 from typing import Optional
@@ -12,7 +13,7 @@ from matplotlib.widgets import RectangleSelector
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QFrame, QPushButton, QLineEdit, QMessageBox, QDoubleSpinBox,
-    QComboBox,
+    QComboBox, QLabel,
 )
 
 from engines.qus.quantus.seg_loading.correlation_length import (
@@ -25,12 +26,16 @@ from .common import (
     hint, results_box, separator, stop_worker, style_axes, style_legend,
 )
 
+NOTE_YELLOW = "#ffd84d"   # "quick power check only" note
+
 
 class RoiBandPage(QWidget):
     """First pass on reference + sample, usable region on the sample B-mode, box ROI + band check."""
 
     accepted = pyqtSignal(object)        # dict: seg_path, roi, first pass summary
     back_requested = pyqtSignal()
+    adjust_requested = pyqtSignal()      # open the correlation-length / first-pass settings
+    first_pass_done = pyqtSignal(object) # FirstPassIntersect (usable depths -> window depth range)
 
     def __init__(self, image_data, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -55,27 +60,38 @@ class RoiBandPage(QWidget):
         side_frame = QFrame()
         side_frame.setFixedWidth(340)
         side = QVBoxLayout(side_frame)
-        side.addWidget(heading("First Pass & ROI"))
-        side.addWidget(hint(f"Sample: {self._image.scan_name}\nReference: {self._image.phantom_name}\n"
-                            "Magenta: enough signal in sample AND reference (peak >= noise floor + 15 dB). "
-                            "Drag a box on the B-mode to draw the ROI (it follows the beam lines); the band "
-                            "check updates when you let go. 'Accept ROI' (or Enter on the image) to accept."))
+        side.addWidget(heading("Power Guided ROI"))
+        side.addWidget(hint(f"Sample: {self._image.scan_name}\nReference: {self._image.phantom_name}"))
         side.addWidget(separator())
-        form = QFormLayout()
+        self._window_box = results_box()
+        self._window_box.setText("Computing correlation lengths on the reference phantom...")
+        side.addWidget(self._window_box)
+        self._adjust_button = QPushButton("Adjust window sizes...")
+        self._adjust_button.setToolTip("Correlation-length settings and plots, first-pass depth step, save location")
+        side.addWidget(self._adjust_button)
+
+        # first-pass step / rerun / save path: shown in the Adjust dialog (see advanced_widget)
+        self._advanced = QWidget()
+        adv = QFormLayout(self._advanced)
         self._step = QDoubleSpinBox()
         self._step.setRange(0.01, 20)
         self._step.setDecimals(2)
         self._step.setSingleStep(0.05)
         self._step.setSuffix(" mm")
         self._step.setKeyboardTracking(False)
-        form.addRow("First-pass depth step:", self._step)
+        adv.addRow("First-pass depth step:", self._step)
+        self._rerun = QPushButton("Rerun first pass")
+        adv.addRow(self._rerun)
+        self._save_path = QLineEdit(str(self._default_save_path()))
+        self._save_path.setToolTip("If the file exists, a numbered name is used (_2, _3, ...)")
+        adv.addRow("Save ROI to:", self._save_path)
+
+        form = QFormLayout()
         self._spectrum_src = QComboBox()
         self._spectrum_src.addItems(["Sample", "Reference"])
         self._spectrum_src.setToolTip("Power spectrum shown behind the bandwidth plot (all lines averaged, dB)")
         form.addRow("Spectrum shown:", self._spectrum_src)
         side.addLayout(form)
-        self._rerun = QPushButton("Rerun first pass")
-        side.addWidget(self._rerun)
         self._fp_box = results_box()
         side.addWidget(self._fp_box)
         self._roi_box = results_box()
@@ -83,22 +99,33 @@ class RoiBandPage(QWidget):
         self._error = error_label()
         side.addWidget(self._error)
         side.addStretch()
-        save_form = QFormLayout()
-        self._save_path = QLineEdit(str(self._default_save_path()))
-        save_form.addRow("Save ROI to:", self._save_path)
-        side.addLayout(save_form)
         self._accept_button = QPushButton("Accept ROI")
-        self._back_button = QPushButton("‹  Back: window sizes")
+        self._back_button = QPushButton("‹  Back: segmentation type")
         for b in (self._accept_button, self._back_button):
             side.addWidget(b)
         root.addWidget(side_frame)
 
+        # drawing instructions right above the image, where the user is looking
+        main = QVBoxLayout()
+        instructions = QLabel(
+            f"<span style='color:{USABLE}; font-weight:bold'>Magenta outline</span>: enough signal in sample "
+            "AND reference (peak &ge; noise floor + 15 dB).&nbsp;&nbsp;<b>Drag a box</b> on the B-mode to draw "
+            "the ROI (it follows the beam lines). <b>Drag inside it to move it</b>, drag its handles to resize; "
+            "the band check updates when you let go. <b>Accept ROI</b> (or Enter on the image) to accept.")
+        instructions.setTextFormat(Qt.TextFormat.RichText)
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet(f"color: {TEXT}; font-size: 14px; padding: 8px 12px; "
+                                   "border: 1px solid rgb(90, 90, 90); border-radius: 6px;")
+        main.addWidget(instructions)
         self._fig = Figure(facecolor=BG)
         self._canvas = FigureCanvas(self._fig)
         self._canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        root.addWidget(self._canvas, 1)
+        main.addWidget(self._canvas, 1)
+        root.addLayout(main, 1)
 
         self._rerun.clicked.connect(self._run_first_pass)
+        self._step.valueChanged.connect(lambda _: self._run_first_pass())
+        self._adjust_button.clicked.connect(self.adjust_requested.emit)
         self._spectrum_src.currentTextChanged.connect(lambda _: self._intersect is not None and self._draw())
         self._accept_button.clicked.connect(self._on_accept)
         self._back_button.clicked.connect(self.back_requested.emit)
@@ -111,6 +138,19 @@ class RoiBandPage(QWidget):
         folder = scan.parent if scan.suffix else scan
         return folder / f"{self._image.scan_name}_FirstPassROI.pkl"
 
+    @property
+    def advanced_widget(self) -> QWidget:
+        """First-pass step, rerun and save path, for the Adjust dialog."""
+        return self._advanced
+
+    def set_window_summary(self, html: str) -> None:
+        self._window_box.setText(html)
+
+    def show_window_error(self, message: str) -> None:
+        self._window_box.setText(f"<span style='color:{UNUSABLE}'>Window sizes not available: {message}</span>"
+                                 "<br>Use 'Adjust window sizes...' to change the settings.")
+        self._fp_box.setText("")
+
     # ------------------------------------------------------------------ first pass
     def set_windows(self, ax_mm: float, lat_mm: float) -> None:
         """Called when the page is shown with the correlation-length window; reruns the first pass
@@ -118,7 +158,9 @@ class RoiBandPage(QWidget):
         if self._windows == (ax_mm, lat_mm) and self._intersect is not None:
             return
         self._windows = (ax_mm, lat_mm)
+        self._step.blockSignals(True)   # one run below, not one per change
         self._step.setValue(round(0.2 * ax_mm, 2))
+        self._step.blockSignals(False)
         self._run_first_pass()
 
     def _settings(self) -> tuple:
@@ -169,6 +211,7 @@ class RoiBandPage(QWidget):
             self._draw()
         except Exception as e:  # never let a plotting problem take down the app (exceptions in slots abort)
             self.show_error(f"Could not draw the first pass: {e}")
+        self.first_pass_done.emit(intersect)
 
     def _on_first_pass_failed(self, error) -> None:
         self._rerun.setEnabled(True)
@@ -246,12 +289,13 @@ class RoiBandPage(QWidget):
 
         self._selector = RectangleSelector(
             ax, self._on_box, useblit=True, button=[1], minspanx=0.5, minspany=0.5, spancoords="data",
-            interactive=True, props=dict(edgecolor="white", facecolor="none", linewidth=1, linestyle="--"))
+            interactive=True, drag_from_anywhere=True,   # drag inside the box to move it
+            props=dict(edgecolor="white", facecolor="none", linewidth=1, linestyle="--"))
         fig.suptitle(f"First Pass\n{s.window_length_mm:.1f} mm window, {s.block_lines}-line blocks "
                      f"({s.block_width_mm:.1f} mm)\nUsable in sample & reference: {inter.usable_both_2d.mean():.0%} "
                      f"of blocks", color=TEXT, fontsize=11, y=0.995)
         fig.text(0.5, 0.905, "Quick power check only: spectra are recomputed with the final window settings "
-                 "for parameter estimation.", color=UNUSABLE, fontsize=10.5, fontweight="bold", ha="center",
+                 "for parameter estimation.", color=NOTE_YELLOW, fontsize=10.5, fontweight="bold", ha="center",
                  va="top")
         if self._roi_extents is not None:            # redraw (e.g. spectrum switched): keep the ROI
             self._selector.extents = self._roi_extents
@@ -328,13 +372,7 @@ class RoiBandPage(QWidget):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        target = Path(self._save_path.text().strip())
-        if target.exists():
-            answer = QMessageBox.question(
-                self, "Save ROI", f"{target.name} already exists. Overwrite it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        target = _unused_path(Path(self._save_path.text().strip()))
         try:
             s = self._intersect.sample
             path = save_roi_pkl(target, self._image, roi, frame=0, extra={
@@ -363,6 +401,16 @@ class RoiBandPage(QWidget):
     def show_error(self, message: str) -> None:
         self._error.setText(message)
         self._error.show()
+
+
+def _unused_path(path: Path) -> Path:
+    """path, or path with _2, _3, ... before the suffix if it already exists (never overwrite an ROI)."""
+    if not path.exists():
+        return path
+    n = 2
+    while (candidate := path.with_name(f"{path.stem}_{n}{path.suffix}")).exists():
+        n += 1
+    return candidate
 
 
 def _padded_grid(x: np.ndarray, z: np.ndarray, mask: np.ndarray):

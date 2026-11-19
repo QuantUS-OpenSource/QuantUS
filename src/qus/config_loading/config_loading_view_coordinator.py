@@ -77,6 +77,11 @@ class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         if self._config_type_widget:
             self._config_type_widget.set_config_loaders(loader_names)
 
+    def set_power_guided_roi(self, available: bool) -> None:
+        """Whether Power and Correlation Guided can run on this segmentation (a 2D ROI on the RF data)."""
+        if self._config_type_widget:
+            self._config_type_widget.set_power_guided_roi(available)
+
     # ============================================================================
     # GENERAL WIDGET OPERATIONS - Loading states, errors, etc.
     # ============================================================================
@@ -172,11 +177,12 @@ class ConfigLoadingViewCoordinator(QStackedWidget, BaseViewMixin):
         self._custom_params_widget.clear_error()
 
     def show_power_correlation_guided(self, roi_info) -> None:
-        """Show the Power and Correlation Guided page (multitaper spectra over the Power Guided ROI);
-        accepting it creates a Custom config. roi_info: load_roi_pkl_info of the loaded ROI, or None."""
+        """Show the Power and Correlation Guided page (multitaper spectra over the ROI); accepting it
+        creates a Custom config. roi_info: load_roi_pkl_info of a Power Guided ROI, or None (any other
+        2D ROI: the page uses the segmentation's bounding A-lines / depths)."""
         from src.qus.window_roi.views.spectral_estimation_page import SpectralEstimationPage
         if self._power_config_widget is None:
-            self._power_config_widget = SpectralEstimationPage(self._image_data, roi_info)
+            self._power_config_widget = SpectralEstimationPage(self._image_data, roi_info, seg_data=self._seg_data)
             self._power_config_widget.params_accepted.connect(self._on_custom_params_configured)
             self._power_config_widget.back_requested.connect(self.show_config_type_selection)
             self.addWidget(self._power_config_widget)

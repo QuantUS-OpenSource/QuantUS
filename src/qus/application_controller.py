@@ -12,6 +12,7 @@ from .application_model import ApplicationModel
 from src.qus.image_loading.image_loading_view_coordinator import ImageLoadingViewCoordinator
 from src.qus.image_loading.image_loading_controller import ImageLoadingController
 from src.qus.spectrum_check.spectrum_check_controller import SpectrumCheckController, spectrum_check_supported
+from src.qus.seg_spectrum_check import SegSpectrumCheckController
 from src.qus.seg_loading.seg_loading_controller import SegmentationLoadingController
 from src.qus.config_loading.config_loading_controller import ConfigLoadingController
 from src.qus.analysis_loading.analysis_loading_controller import AnalysisLoadingController
@@ -20,9 +21,9 @@ from src.qus.export_loading.export_loading_controller import ExportLoadingContro
 from engines.qus.quantus.analysis.paramap.framework import ParamapAnalysis
 from engines.qus.quantus.data_objs import UltrasoundRfImage, BmodeSeg, RfAnalysisConfig
 
-# Spectrum Check step (Yuanshan Wu) between image loading and segmentation. Turned off on
-# whitson-dev while an alternative is built; the step's code is unchanged, set True to show it.
-SHOW_SPECTRUM_CHECK = False
+# Spectrum Check step (Yuanshan Wu): optional, between segmentation and config loading. The user
+# opts in with the "Include spectrum check after segmentation" toggle on the segmentation type
+# screen (not offered for Power Guided ROI, which has its own band check).
 
 
 class ApplicationController(QObject):
@@ -58,6 +59,7 @@ class ApplicationController(QObject):
         
         # Data storage
         self._image_data: Optional[UltrasoundRfImage] = None
+        self._spectrum_check_requested = False  # toggle on the segmentation type screen
         self._seg_data: Optional[BmodeSeg] = None
         self._config_data: Optional[RfAnalysisConfig] = None
         
@@ -144,7 +146,7 @@ class ApplicationController(QObject):
         
     def _connect_model_signals(self) -> None:
         """Connect unified model signals to application controller."""
-        self._model.image_loaded.connect(self._initialize_spectrum_check)
+        self._model.image_loaded.connect(self._initialize_segmentation_loading)
         self._model.error_occurred.connect(self._on_model_error)
         
     def _initialize_image_loading(self) -> None:
@@ -162,54 +164,50 @@ class ApplicationController(QObject):
         self._widget_stack.addWidget(self._image_loading_controller.view)
         self._widget_stack.setCurrentWidget(self._image_loading_controller.view)
         
-    def _initialize_spectrum_check(self, image_data: UltrasoundRfImage) -> None:
+    def _initialize_spectrum_check(self, image_data: UltrasoundRfImage, seg_data: BmodeSeg) -> None:
         """
         Initialize the spectrum check screen (sample vs. phantom ROI power spectra), shown
-        between image loading and segmentation. Data it can't handle (e.g. 3D volumes) goes
-        straight to segmentation.
+        between segmentation and config loading when the user turned it on. Data it can't
+        handle (e.g. 3D volumes) goes straight to config loading.
 
         Args:
-            image_data: Loaded image data from previous screen
+            image_data: Loaded image data
+            seg_data: Confirmed segmentation
         """
-        self._image_data = image_data
         if self._spectrum_check_controller:
             self._cleanup_spectrum_check()
+        self._model.set_spectrum_band(None, None)
 
-        if not SHOW_SPECTRUM_CHECK or not spectrum_check_supported(image_data):
-            self._model.set_spectrum_band(None, None)
-            self._initialize_segmentation_loading(image_data)
+        if not spectrum_check_supported(image_data):
+            self._initialize_config_loading(image_data, seg_data)
             return
 
         try:
-            self._spectrum_check_controller = SpectrumCheckController(self._model, image_data)
+            # sample / reference ROIs start from the segmentation's bounding box
+            self._spectrum_check_controller = SegSpectrumCheckController(self._model, image_data, seg_data)
         except Exception as e:
-            print(f"WARNING: Spectrum check unavailable ({e}); continuing to segmentation")
+            print(f"WARNING: Spectrum check unavailable ({e}); continuing to config loading")
             self._spectrum_check_controller = None
-            self._model.set_spectrum_band(None, None)
-            self._initialize_segmentation_loading(image_data)
+            self._initialize_config_loading(image_data, seg_data)
             return
 
         self._spectrum_check_controller.user_action.connect(self._on_spectrum_check_action)
-        self._spectrum_check_controller.back_requested.connect(self._navigate_to_image_loading)
+        self._spectrum_check_controller.back_requested.connect(self._navigate_back_from_spectrum_check)
         self._widget_stack.addWidget(self._spectrum_check_controller.get_widget())
         self._widget_stack.setCurrentWidget(self._spectrum_check_controller.get_widget())
 
     def _on_spectrum_check_action(self, action_name: str, action_data) -> None:
-        """Band accepted or skipped: continue to segmentation."""
+        """Band accepted or skipped: continue to config loading."""
         if action_name == 'spectrum_check_completed':
             image_data = self._model.image_data if self._model.image_data is not None else self._image_data
-            self._initialize_segmentation_loading(image_data)
+            seg_data = self._model.seg_data if self._model.seg_data is not None else self._seg_data
+            self._initialize_config_loading(image_data, seg_data)
 
-    def _navigate_to_spectrum_check(self) -> None:
-        """Navigate back from segmentation to the spectrum check (or image loading if it was skipped)."""
-        if self._spectrum_check_controller is None:
-            self._navigate_to_image_loading()
-            return
-        if self._segmentation_controller:
-            self._cleanup_segmentation_loading()
-        self._widget_stack.setCurrentWidget(self._spectrum_check_controller.get_widget())
-        self._seg_data = None
-        self._config_data = None
+    def _navigate_back_from_spectrum_check(self) -> None:
+        """Back from the spectrum check: return to the segmentation screen."""
+        self._cleanup_spectrum_check()
+        self._model.set_spectrum_band(None, None)
+        self._navigate_to_segmentation_loading()
 
     def _cleanup_spectrum_check(self) -> None:
         """Clean up spectrum check controller resources."""
@@ -239,7 +237,7 @@ class ApplicationController(QObject):
         
         # Connect to handle segmentation actions
         self._segmentation_controller.view.user_action.connect(self._on_segmentation_action)
-        self._segmentation_controller.view.back_requested.connect(self._navigate_to_spectrum_check)
+        self._segmentation_controller.view.back_requested.connect(self._navigate_to_image_loading)
         
         # Add to stack and show
         self._widget_stack.addWidget(self._segmentation_controller.view)
@@ -261,7 +259,7 @@ class ApplicationController(QObject):
         
         # Connect to handle config actions
         self._config_loading_controller.user_action.connect(self._on_config_action)
-        self._config_loading_controller.back_requested.connect(self._navigate_to_segmentation_loading)
+        self._config_loading_controller.back_requested.connect(self._navigate_back_from_config_loading)
         
         # Add to stack and show
         self._widget_stack.addWidget(self._config_loading_controller.get_widget())
@@ -310,7 +308,7 @@ class ApplicationController(QObject):
         """
         if action_name == 'image_loaded':
             self._image_data = action_data
-            self._initialize_spectrum_check(self._image_data)
+            self._initialize_segmentation_loading(self._image_data)
             
     def _on_segmentation_action(self, action_name: str, action_data) -> None:
         """
@@ -320,14 +318,21 @@ class ApplicationController(QObject):
             action_name: Name of the action
             action_data: Data associated with the action
         """
-        if action_name == 'segmentation_confirmed':
+        if action_name == 'seg_type_selected':
+            # {'seg_type': ..., 'spectrum_check': bool} from the segmentation type screen
+            self._spectrum_check_requested = bool(isinstance(action_data, dict) and action_data.get('spectrum_check'))
+            self._model.set_spectrum_band(None, None)
+        elif action_name == 'segmentation_confirmed':
             self._seg_data = self._segmentation_controller.get_loaded_segmentation()
             model_image_data = self._model.image_data
             
             # Use the model data instead of potentially stale controller data
             image_data_to_use = model_image_data if model_image_data is not None else self._image_data
 
-            self._initialize_config_loading(image_data_to_use, self._seg_data)
+            if self._spectrum_check_requested:
+                self._initialize_spectrum_check(image_data_to_use, self._seg_data)
+            else:
+                self._initialize_config_loading(image_data_to_use, self._seg_data)
             
     def _on_config_action(self, action_name: str, action_data) -> None:
         """
@@ -467,6 +472,16 @@ class ApplicationController(QObject):
         self._seg_data = None
         self._config_data = None
         
+    def _navigate_back_from_config_loading(self) -> None:
+        """Back from config loading: to the spectrum check if it was used, else segmentation."""
+        if self._spectrum_check_controller is None:
+            self._navigate_to_segmentation_loading()
+            return
+        if self._config_loading_controller:
+            self._cleanup_config_loading()
+        self._config_data = None
+        self._widget_stack.setCurrentWidget(self._spectrum_check_controller.get_widget())
+
     def _navigate_to_segmentation_loading(self) -> None:
         """Navigate to segmentation loading screen."""
         # Clean up config controller

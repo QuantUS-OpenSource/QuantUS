@@ -1,9 +1,13 @@
 """Power and Correlation Guided analysis config (S1Study DetermineSpectralParameters ->
 ComputePowerSpectra -> DetermineBandwidth, over the whole ROI):
 
-  correlation lengths inside the Power Guided ROI -> final window; NW from the ROI's first-pass
-  band; multitaper spectra on a window grid over the ROI (reference mean + sample); band in every
+  correlation lengths inside the ROI -> final window; NW from the ROI's first-pass band;
+  multitaper spectra on a window grid over the ROI (reference mean + sample); band in every
   window, shared by sample and reference -> analysis band.
+
+Any 2D ROI works. A Power Guided ROI brings its first-pass band (and correlation settings) in its
+pickle; for a hand-drawn / loaded ROI the ROI is the A-lines x depths bounding the segmentation and
+its first-pass band is computed first (windows.first_pass_band_for_roi), with the probe's preset.
 
 Accepting turns the result into a Custom analysis config (band, sampling frequency, windows,
 overlaps), shown in the usual config preview."""
@@ -18,12 +22,15 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QFrame, QPushButton, QDoubleSpinBox, QComboBox, QLineEdit,
-    QProgressBar, QLabel, QScrollArea,
+    QProgressBar, QLabel, QScrollArea, QToolButton, QStackedWidget, QGridLayout,
 )
 
 from engines.qus.quantus.seg_loading.correlation_length import PROBE_PRESETS, positions_from_image
 from engines.qus.quantus.seg_loading.correlation_length.roi import sector_roi_from_rows_lines
 from engines.qus.quantus.seg_loading.power_spectrum_mtm import power_spectral_estimation_from_image
+from src.qus.seg_spectrum_check import seg_bounding_roi
+from src.qus.window_roi.probe import detect_probe_preset
+from src.qus.window_roi.windows import first_pass_band_for_roi
 from .common import (
     AXIAL, BG, LATERAL, MUTED, ROI, SIDEBAR_WIDTH, TEXT, UNUSABLE, USABLE, Worker, bmode_db, error_label,
     first_frame, heading, hint, results_box, separator, stop_worker, style_axes, style_legend,
@@ -31,17 +38,19 @@ from .common import (
 
 BAND_STRICT = "Strict (valid in every window)"
 BAND_PCTL = "95th / 5th percentile"
+BAND_CHOICES = (BAND_STRICT, BAND_PCTL)   # combo index 0 / 1
 SAMPLE = "#4fe0d0"       # sample spectrum
 REFERENCE = "#ffd166"    # reference spectrum
 
 
 class SpectralEstimationPage(QWidget):
-    """roi_info: the first-pass details saved with a Power Guided ROI (load_roi_pkl_info), or None."""
+    """roi_info: the first-pass details saved with a Power Guided ROI (load_roi_pkl_info), or None;
+    seg_data: the segmentation, used when there is no roi_info (any 2D ROI)."""
 
     params_accepted = pyqtSignal(dict)   # Custom config parameters
     back_requested = pyqtSignal()
 
-    def __init__(self, image_data, roi_info: Optional[dict], parent: Optional[QWidget] = None):
+    def __init__(self, image_data, roi_info: Optional[dict], parent: Optional[QWidget] = None, seg_data=None):
         super().__init__(parent)
         self._image = image_data
         self._info = roi_info
@@ -49,13 +58,22 @@ class SpectralEstimationPage(QWidget):
         self._axial, self._lateral = positions_from_image(image_data, *rf.shape)
         self._bmode = bmode_db(rf)
         self._roi = None
+        self._band = None         # (fLow, fHigh) MHz first-pass band of the ROI (saved, or computed)
         if roi_info is not None:
             self._roi = sector_roi_from_rows_lines(self._axial, self._lateral, roi_info["RF Rows"], roi_info["RF Lines"])
+            band = roi_info.get("Band MHz")
+            if band is not None and np.all(np.isfinite(band)):
+                self._band = tuple(float(v) for v in band)
+        else:
+            box = seg_bounding_roi(seg_data, rf.shape)   # r0, r1, c0, c1 (half-open)
+            if box is not None:
+                r0, r1, c0, c1 = box
+                self._roi = sector_roi_from_rows_lines(self._axial, self._lateral, (r0, r1 - 1), (c0, c1 - 1))
         self._result = None
         self._worker: Optional[Worker] = None
         self._sel = None          # selected window (i, j)
         self._build_ui()
-        self._prefill()
+        self._prefill()   # the main frame starts on the parameter confirmation
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
@@ -65,13 +83,29 @@ class SpectralEstimationPage(QWidget):
         side_frame.setFixedWidth(SIDEBAR_WIDTH + 40)
         side = QVBoxLayout(side_frame)
         side.addWidget(heading("Power and Correlation Guided"))
-        side.addWidget(hint(
-            "Multitaper power spectra over the ROI with the final window settings: correlation lengths "
-            "inside the ROI give the window, the ROI's first-pass band gives the multitaper NW, and the band "
-            "is recomputed in every window, shared by sample and reference."))
+        steps = QLabel(
+            "<ul style='margin-left:-20px'>"
+            "<li><b>Window size</b> from the correlation lengths inside your ROI</li>"
+            "<li><b>Analysis band</b> from multitaper power spectra in every window, shared by sample "
+            "and reference</li>"
+            "<li>Confirm the parameters, then compute (about 2 minutes)</li>"
+            "<li>Pick the band and press <b>Use for Analysis Config</b>: the window sizes, overlaps and "
+            "band are passed to the analysis step</li></ul>")
+        steps.setTextFormat(Qt.TextFormat.RichText)
+        steps.setWordWrap(True)
+        steps.setStyleSheet(f"font-size: 14px; color: {TEXT};")
+        side.addWidget(steps)
         self._roi_label = hint("")
+        self._roi_label.setStyleSheet("font-size: 13px; color: rgb(200, 200, 200);")
         side.addWidget(self._roi_label)
         side.addWidget(separator())
+
+        # results / errors first: what the user needs to read (progress is shown in the main frame)
+        self._results = results_box()
+        self._results.hide()
+        side.addWidget(self._results)
+        self._error = error_label()
+        side.addWidget(self._error)
 
         def spin(lo, hi, step, decimals, suffix=""):
             s = QDoubleSpinBox()
@@ -82,55 +116,55 @@ class SpectralEstimationPage(QWidget):
             s.setKeyboardTracking(False)
             return s
 
-        form = QFormLayout()
-        self._win_len = spin(0.1, 100, 0.5, 2, " mm")
-        self._win_wid = spin(0.1, 200, 0.5, 2, " mm")
-        self._threshold = spin(0.05, 0.95, 0.05, 2)
-        self._ax_factor = spin(0.5, 50, 0.5, 1, " x")
-        self._lat_factor = spin(0.5, 50, 0.5, 1, " x")
-        self._kappa = spin(0.01, 1.0, 0.05, 2)
-        self._kappa.setToolTip("Target multitaper smoothing W as a fraction of the bandwidth (NW = kappa x B x T)")
-        self._avoid = QLineEdit()
-        self._avoid.setPlaceholderText("none (e.g. 7.5)")
-        self._avoid.setToolTip("Known spectral nulls (MHz, comma separated) kept out of the band and the smoothing")
-        self._ov_ax = spin(0, 99, 1, 0, " %")
-        self._ov_lat = spin(0, 99, 1, 0, " %")
-        form.addRow("Measurement window (axial):", self._win_len)
-        form.addRow("Measurement window (lateral):", self._win_wid)
-        form.addRow("Correlation threshold:", self._threshold)
-        form.addRow("Axial window factor:", self._ax_factor)
-        form.addRow("Lateral window factor:", self._lat_factor)
-        form.addRow("Kappa (W / bandwidth):", self._kappa)
-        form.addRow("Avoid frequencies (MHz):", self._avoid)
-        form.addRow("Min axial overlap:", self._ov_ax)
-        form.addRow("Min lateral overlap:", self._ov_lat)
-        side.addLayout(form)
-
-        self._compute_button = QPushButton("Compute Power Spectra")
-        side.addWidget(self._compute_button)
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 1000)
-        self._progress.setTextVisible(False)
-        self._progress.hide()
-        self._progress_label = hint("")
-        self._progress_label.hide()
-        side.addWidget(self._progress)
-        side.addWidget(self._progress_label)
-        self._results = results_box()
-        side.addWidget(self._results)
-        self._error = error_label()
-        side.addWidget(self._error)
-        side.addStretch()
-
         out = QFormLayout()
         self._band_choice = QComboBox()
-        self._band_choice.addItems([BAND_STRICT, BAND_PCTL])
+        self._band_choice.addItems(list(BAND_CHOICES))
+        self._band_choice.setToolTip("Strict: valid in every window of the ROI. 95th / 5th percentile: "
+                                     "ignores the 5% most extreme windows at each edge.")
         self._win_thresh = spin(1, 100, 5, 0, " %")
         self._win_thresh.setValue(95)
         self._win_thresh.setToolTip("Analysis config: share of a window that must lie inside the ROI")
         out.addRow("Analysis band:", self._band_choice)
         out.addRow("Config window threshold:", self._win_thresh)
-        side.addLayout(out)
+        self._out_widget = QWidget()
+        self._out_widget.setLayout(out)
+        self._out_widget.hide()          # shown with the results
+        side.addWidget(self._out_widget)
+        self._change_button = QPushButton("Change parameters and recompute...")
+        self._change_button.hide()
+        side.addWidget(self._change_button)
+
+        # Advanced (collapsed): rarely changed settings and the full taper / grid details
+        self._threshold = spin(0.05, 0.95, 0.05, 2)
+        self._kappa = spin(0.01, 1.0, 0.05, 2)
+        self._kappa.setToolTip("Target multitaper smoothing W as a fraction of the bandwidth (NW = kappa x B x T)")
+        self._avoid = QLineEdit()
+        self._avoid.setPlaceholderText("none (e.g. 7.5)")
+        self._avoid.setToolTip("Known spectral nulls (MHz, comma separated) kept out of the band and the smoothing")
+        self._advanced_toggle = QToolButton()
+        self._advanced_toggle.setText("Advanced settings")
+        self._advanced_toggle.setCheckable(True)
+        self._advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._advanced_toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
+        side.addWidget(self._advanced_toggle)
+        self._advanced = QWidget()
+        adv = QVBoxLayout(self._advanced)
+        adv.setContentsMargins(8, 0, 0, 0)
+        adv.addWidget(hint("Uses appropriate presets for each probe. Changes apply the next time you compute."))
+        form = QFormLayout()
+        form.addRow("Correlation threshold:", self._threshold)
+        form.addRow("Kappa (W / bandwidth):", self._kappa)
+        form.addRow("Avoid frequencies (MHz):", self._avoid)
+        adv.addLayout(form)
+        self._details = results_box()
+        self._details.hide()
+        adv.addWidget(self._details)
+        self._advanced.hide()
+        side.addWidget(self._advanced)
+        self._advanced_toggle.toggled.connect(self._set_advanced_open)
+        side.addStretch()
+
         self._accept_button = QPushButton("Use for Analysis Config")
         self._back_button = QPushButton("‹  Back: config type")
         for b in (self._accept_button, self._back_button):
@@ -144,20 +178,133 @@ class SpectralEstimationPage(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         root.addWidget(scroll)
 
+        # main frame: parameter confirmation -> progress while computing -> results figure
+        self._main = QStackedWidget()
+
+        # 1. confirm the parameters
+        self._confirm = QWidget()
+        conf = QVBoxLayout(self._confirm)
+        conf.addStretch(1)
+        title = QLabel("Confirm Parameters")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {TEXT};")
+        conf.addWidget(title)
+        self._confirm_sub = QLabel("")
+        self._confirm_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._confirm_sub.setWordWrap(True)
+        self._confirm_sub.setStyleSheet(f"font-size: 14px; color: {MUTED};")
+        conf.addWidget(self._confirm_sub)
+        self._win_len = spin(0.1, 100, 0.5, 2, " mm")
+        self._win_wid = spin(0.1, 200, 0.5, 2, " mm")
+        self._ax_factor = spin(0.5, 50, 0.5, 1, " x")
+        self._lat_factor = spin(0.5, 50, 0.5, 1, " x")
+        self._ov_ax = spin(0, 99, 1, 0, " %")
+        self._ov_lat = spin(0, 99, 1, 0, " %")
+        self._win_len.setToolTip("Size of the region the correlation length is measured in, at each depth")
+        self._win_wid.setToolTip("Size of the region the correlation length is measured in, at each depth")
+        self._ax_factor.setToolTip("Window size = factor x correlation length (the largest over the ROI depths)")
+        self._lat_factor.setToolTip("Window size = factor x correlation length (the largest over the ROI depths)")
+        self._ov_ax.setToolTip("Minimum overlap between neighbouring windows")
+        self._ov_lat.setToolTip("Minimum overlap between neighbouring windows")
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(10)
+        for col, text in ((1, "Axial"), (2, "Lateral")):
+            head = QLabel(text)
+            head.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            head.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {TEXT};")
+            grid.addWidget(head, 0, col)
+        for row, (text, ax_w, lat_w) in enumerate((
+                ("Correlation measurement window", self._win_len, self._win_wid),
+                ("Window size factor (x correlation length)", self._ax_factor, self._lat_factor),
+                ("Minimum window overlap", self._ov_ax, self._ov_lat)), start=1):
+            label = QLabel(text)
+            label.setStyleSheet(f"font-size: 14px; color: {TEXT};")
+            grid.addWidget(label, row, 0)
+            for col, w in ((1, ax_w), (2, lat_w)):
+                w.setMinimumWidth(120)
+                grid.addWidget(w, row, col)
+        grid_box = QFrame()
+        grid_box.setObjectName("confirmBox")
+        grid_box.setStyleSheet("QFrame#confirmBox { border: 1px solid rgb(90, 90, 90); border-radius: 8px; }")
+        grid_box.setLayout(grid)
+        grid_box.setMaximumWidth(760)
+        conf.addSpacing(12)
+        conf.addWidget(grid_box, 0, Qt.AlignmentFlag.AlignHCenter)
+        conf.addSpacing(12)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self._cancel_change = QPushButton("Back to results")
+        self._cancel_change.hide()
+        buttons.addWidget(self._cancel_change)
+        self._compute_button = QPushButton("Compute Window Sizes and Power Spectra")
+        self._compute_button.setStyleSheet(
+            "QPushButton { color: white; font-size: 15px; background: rgb(90, 37, 255); border-radius: 15px; "
+            "padding: 8px 22px; } QPushButton:disabled { color: rgb(150, 150, 150); background: rgb(70, 70, 70); }")
+        buttons.addWidget(self._compute_button)
+        buttons.addStretch(1)
+        conf.addLayout(buttons)
+        conf.addStretch(2)
+        self._main.addWidget(self._confirm)
+
+        # 2. progress while computing
+        self._busy = QWidget()
+        busy = QVBoxLayout(self._busy)
+        busy.addStretch(1)
+        self._busy_title = QLabel("Computing Window Sizes and Power Spectra")
+        self._busy_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._busy_title.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {TEXT};")
+        busy.addWidget(self._busy_title)
+        self._busy_sub = QLabel("About 2 minutes. The window sizes, overlaps and analysis band are then "
+                                "passed to the analysis step.")
+        self._busy_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._busy_sub.setWordWrap(True)
+        self._busy_sub.setStyleSheet(f"font-size: 14px; color: {MUTED};")
+        busy.addWidget(self._busy_sub)
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 1000)
+        self._progress.setTextVisible(False)
+        self._progress.setFixedHeight(14)
+        self._progress.setMinimumWidth(500)
+        self._progress.setMaximumWidth(700)
+        busy.addWidget(self._progress, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._progress_label = QLabel("")
+        self._progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._progress_label.setStyleSheet(f"font-size: 14px; color: {TEXT};")
+        busy.addWidget(self._progress_label)
+        busy.addStretch(2)
+        self._main.addWidget(self._busy)
+
+        # 3. results
         self._fig = Figure(facecolor=BG)
         self._canvas = FigureCanvas(self._fig)
-        root.addWidget(self._canvas, 1)
+        self._main.addWidget(self._canvas)
+        root.addWidget(self._main, 1)
 
         self._compute_button.clicked.connect(self._compute)
-        self._band_choice.currentTextChanged.connect(lambda _: self._result is not None and self._redraw())
+        self._change_button.clicked.connect(self._show_confirm)
+        self._cancel_change.clicked.connect(lambda: self._main.setCurrentWidget(self._canvas))
+        self._band_choice.currentIndexChanged.connect(lambda _: self._result is not None and self._on_band_choice())
         self._accept_button.clicked.connect(self._on_accept)
         self._back_button.clicked.connect(self.back_requested.emit)
         self._canvas.mpl_connect("button_press_event", self._on_click)
         self._accept_button.setEnabled(False)
 
+    def _show_confirm(self) -> None:
+        """Parameter confirmation in the main frame ('Back to results' once there are results)."""
+        self._cancel_change.setVisible(self._result is not None)
+        self._main.setCurrentWidget(self._confirm)
+
     def _prefill(self) -> None:
         cs = dict((self._info or {}).get("Correlation Settings") or {})
+        if not cs:   # not a Power Guided ROI: the probe's preset
+            cs = {"preset": detect_probe_preset(self._image)}
         preset = PROBE_PRESETS.get(cs.get("preset") or "", {})
+        name = cs.get("preset")
+        self._confirm_sub.setText(
+            (f"Defaults use the appropriate presets for the {name} probe. " if name in PROBE_PRESETS
+             else "No preset for this probe: defaults are generic. ")
+            + "Check them, then compute.")
         span = (self._roi.depth_range_mm[1] - self._roi.depth_range_mm[0]) if self._roi is not None else 10.0
         default_len = round(min(10.0, max(1.0, span / 3)), 1)
         self._win_len.setValue(cs.get("window_length_mm", preset.get("window_length_mm", default_len)))
@@ -168,24 +315,19 @@ class SpectralEstimationPage(QWidget):
         self._kappa.setValue(0.2)
         self._ov_ax.setValue(92)
         self._ov_lat.setValue(85)
-        if self._info is None or self._roi is None:
+        if self._roi is None:
             self._roi_label.setText("")
-            self._error.setText("This config needs an ROI from Power Guided ROI Selection (it uses the ROI's "
-                                "first-pass band). Go back to segmentation and choose Power Guided ROI Selection, "
-                                "or load an ROI saved by it.")
+            self._error.setText("This config needs a 2D ROI on the RF data (the segmentation has no usable mask).")
             self._error.show()
             self._compute_button.setEnabled(False)
             return
-        band = self._info.get("Band MHz")
+        self._show_roi_label()
+
+    def _show_roi_label(self) -> None:
         (r1, r2), (l1, l2) = self._roi.rows, self._roi.lines
         d0, d1 = self._roi.depth_range_mm
-        self._roi_label.setText(
-            f"ROI: A-lines {l1}-{l2}, depth {d0:.1f}-{d1:.1f} mm\n"
-            + (f"First-pass band: {band[0]:.2f}-{band[1]:.2f} MHz" if band else "First-pass band: none saved"))
-        if not band or not np.all(np.isfinite(band)):
-            self._error.setText("The ROI has no first-pass band; redraw it in Power Guided ROI Selection.")
-            self._error.show()
-            self._compute_button.setEnabled(False)
+        source = "bounding A-lines / depths of the segmentation" if self._info is None else "Power Guided ROI"
+        self._roi_label.setText(f"ROI ({source}): A-lines {l1}-{l2}, depth {d0:.1f}-{d1:.1f} mm")
 
     def _avoid_freqs(self) -> tuple:
         text = self._avoid.text().replace(";", ",").strip()
@@ -203,7 +345,7 @@ class SpectralEstimationPage(QWidget):
             self._error.setText("Avoid frequencies: numbers in MHz, separated by commas.")
             self._error.show()
             return
-        band = tuple(float(v) for v in self._info["Band MHz"])
+        band = self._band
         ckw = dict(window_length_mm=self._win_len.value(), window_width_mm=self._win_wid.value(),
                    threshold=self._threshold.value(), ax_window_factor=self._ax_factor.value(),
                    lat_window_factor=self._lat_factor.value())
@@ -212,22 +354,41 @@ class SpectralEstimationPage(QWidget):
         roi = self._roi
 
         def work(report):
-            return power_spectral_estimation_from_image(self._image, roi, roi_band_mhz=band, correlation_kwargs=ckw,
-                                                        progress=report, **kw)
+            roi_band = band
+            if roi_band is None:   # not saved with the ROI: first-pass band in this ROI first
+                roi_band = first_pass_band_for_roi(self._image, roi, ckw,
+                                                   report=lambda f, m: report(0.1 * f, m))
+                self._band = roi_band
+            return power_spectral_estimation_from_image(self._image, roi, roi_band_mhz=roi_band, correlation_kwargs=ckw,
+                                                        progress=lambda f, m: report(0.1 + 0.9 * f, m)
+                                                        if band is None else report(f, m), **kw)
 
         self._result = None
         self._error.hide()
         self._accept_button.setEnabled(False)
         self._compute_button.setEnabled(False)
-        self._results.setText("Computing (multitaper spectra take a few minutes)...")
+        self._results.hide()
+        self._details.hide()
+        self._out_widget.hide()
+        self._change_button.hide()
         self._progress.setValue(0)
-        self._progress.show()
-        self._progress_label.show()
+        self._progress_label.setText("Starting...")
+        self._set_busy(True)
         self._worker = Worker(work, self, with_progress=True)
         self._worker.progress.connect(self._on_progress)
         self._worker.done.connect(self._on_done)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
+
+    def _set_busy(self, busy: bool) -> None:
+        """Progress panel in the main frame while computing; afterwards the results figure if there
+        are results, else back to the parameter confirmation."""
+        if busy:
+            self._main.setCurrentWidget(self._busy)
+        elif self._result is not None:
+            self._main.setCurrentWidget(self._canvas)
+        else:
+            self._show_confirm()
 
     def _on_progress(self, frac: float, msg: str) -> None:
         self._progress.setValue(int(1000 * frac))
@@ -235,9 +396,12 @@ class SpectralEstimationPage(QWidget):
 
     def _on_done(self, result) -> None:
         self._compute_button.setEnabled(True)
-        self._progress.hide()
-        self._progress_label.hide()
         self._result = result
+        self._set_busy(False)
+        self._results.show()
+        self._out_widget.show()
+        self._change_button.show()
+        self._show_roi_label()   # shows the first-pass band if it was computed in this run
         p, g, bw = result.parameters, result.grid, result.bandwidth
         c = p.check
         rows = "".join(
@@ -248,6 +412,14 @@ class SpectralEstimationPage(QWidget):
                   f"for N = {p.n} (as the MATLAB)</span>" if int(g.ax_lengths[0]) != p.n else "")
         usable_colour = TEXT if bw.n_usable == bw.n_windows else UNUSABLE
         self._results.setText(
+            f"<b>Window size</b>: <b>{result.ax_window_mm:.1f} mm</b> axial \u00d7 "
+            f"<b>{result.lat_window_mm:.1f} mm</b> lateral<br>"
+            f"<b>Analysis band</b>: strict {bw.shared_strict[0]:.1f} - {bw.shared_strict[1]:.1f} MHz, "
+            f"95/5 pct {bw.shared_pctl[0]:.1f} - {bw.shared_pctl[1]:.1f} MHz<br>"
+            f"<span style='color:{usable_colour}'>{bw.n_usable} of {bw.n_windows} windows usable in sample and "
+            f"reference</span>{note}")
+        self._details.show()
+        self._details.setText(
             f"<b>Final window</b> (correlation inside the ROI): <b>{result.ax_window_mm:.1f} mm</b> axial x "
             f"<b>{result.lat_window_mm:.1f} mm</b> lateral<br>"
             f"<b>Band for NW</b>: {p.roi_band_mhz[0]:.2f}-{p.roi_band_mhz[1]:.2f} -> "
@@ -263,6 +435,7 @@ class SpectralEstimationPage(QWidget):
             f"and reference</span><br>"
             f"<b>Shared band</b>: strict {bw.shared_strict[0]:.1f}-{bw.shared_strict[1]:.1f} MHz, "
             f"95/5 pct {bw.shared_pctl[0]:.1f}-{bw.shared_pctl[1]:.1f} MHz")
+        self._update_band_labels()
         self._accept_button.setEnabled(bool(np.all(np.isfinite(self._chosen_band()))))
         self._sel = self._default_window()
         try:
@@ -273,15 +446,30 @@ class SpectralEstimationPage(QWidget):
 
     def _on_failed(self, error) -> None:
         self._compute_button.setEnabled(True)
-        self._progress.hide()
-        self._progress_label.hide()
-        self._results.setText("")
+        self._set_busy(False)
+        self._results.hide()
         self._error.setText(str(error))
         self._error.show()
+        self._advanced_toggle.setChecked(True)   # the settings are the way to fix it
+
+    def _set_advanced_open(self, open_: bool) -> None:
+        self._advanced.setVisible(open_)
+        self._advanced_toggle.setArrowType(Qt.ArrowType.DownArrow if open_ else Qt.ArrowType.RightArrow)
+
+    def _update_band_labels(self) -> None:
+        """Show each band's values in the band choice."""
+        bw = self._result.bandwidth
+        for i, (name, band) in enumerate(zip(BAND_CHOICES, (bw.shared_strict, bw.shared_pctl))):
+            value = (f"{band[0]:.1f} - {band[1]:.1f} MHz" if np.all(np.isfinite(band)) else "none")
+            self._band_choice.setItemText(i, f"{value}  ({name.split(' (')[0].lower()})")
+
+    def _on_band_choice(self) -> None:
+        self._accept_button.setEnabled(bool(np.all(np.isfinite(self._chosen_band()))))
+        self._redraw()
 
     def _chosen_band(self) -> tuple:
         bw = self._result.bandwidth
-        return bw.shared_strict if self._band_choice.currentText() == BAND_STRICT else bw.shared_pctl
+        return bw.shared_strict if self._band_choice.currentIndex() == 0 else bw.shared_pctl
 
     def _default_window(self):
         """Deepest row, middle column (as DetermineBW_ROI's example spectrum)."""
@@ -307,14 +495,22 @@ class SpectralEstimationPage(QWidget):
         self._canvas.draw_idle()
 
     def _plot_correlation(self, ax) -> None:
-        c = self._result.correlation
+        """Suggested window size (factor x correlation length) at each depth in the ROI; the window
+        used is the largest of each (dashed)."""
+        r = self._result
+        c = r.correlation
         d = c.depths_mm
-        for mean, sd, colour, label in ((c.ax_mean_mm, c.ax_std_mm, AXIAL, "Axial"),
-                                        (c.lat_mean_mm, c.lat_std_mm, LATERAL, "Lateral")):
-            ax.plot(mean, d, color=colour, linewidth=2, label=label)
-            ax.fill_betweenx(d, mean - sd, mean + sd, color=colour, alpha=0.2, linewidth=0)
+        for values, final, colour, label in (
+                (c.recommended_ax_window_mm, r.ax_window_mm, AXIAL, f"Axial ({c.ax_window_factor:g}x length)"),
+                (c.recommended_lat_window_mm, r.lat_window_mm, LATERAL, f"Lateral ({c.lat_window_factor:g}x width)")):
+            ax.step(values, d, where="mid", color=colour, linewidth=2, label=label)
+            if np.isfinite(final):
+                ax.axvline(final, color=colour, linestyle="--", linewidth=1.2,
+                           label=f"{label.split(' (')[0]} used: {final:.1f} mm")
         ax.invert_yaxis()
-        style_axes(ax, "Correlation Lengths in the ROI (Mean ± SD)", "Correlation length (mm)", "Depth (mm)")
+        finals = [v for v in (r.ax_window_mm, r.lat_window_mm) if np.isfinite(v)]
+        ax.set_xlim(0, 1.3 * max(finals) if finals else None)
+        style_axes(ax, "Suggested Window Size vs. Depth", "Window size (mm)", "Depth (mm)")
         style_legend(ax.legend(fontsize=8, loc="lower right"))
 
     def _plot_grid(self, ax) -> None:
