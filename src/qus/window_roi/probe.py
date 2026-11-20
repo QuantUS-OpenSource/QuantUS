@@ -66,3 +66,38 @@ def detect_probe_preset(image_data) -> Optional[str]:
         if _close(pitch, p) and _close(radius, r):
             return name
     return None
+
+
+# Known spectral nulls (MHz) per (probe preset, software version prefix): kept out of the analysis band
+# by the multitaper band (avoid_freq: peak searched above the null, band kept W away from it).
+# L20 on software 13.0.0 has a null at ~7.5 MHz (S1Study DetermineSpectralParameters / DetermineBandwidth).
+KNOWN_SPECTRAL_NULLS = {
+    ("L20", "13.0.0"): (7.5,),
+}
+
+
+def read_software_version(yml_path) -> Optional[str]:
+    """Top-level 'software version' of a Clarius rf.yml, e.g. '13.0.0-13049d'."""
+    with open(yml_path, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if line.startswith("software version:"):
+                return line.split(":", 1)[1].strip()
+    return None
+
+
+def known_spectral_nulls(image_data) -> tuple:
+    """Known spectral nulls (MHz) for the scan's probe and software version, () if none / unknown."""
+    preset = detect_probe_preset(image_data)
+    if preset is None:
+        return ()
+    try:
+        yml = _rf_yml(getattr(image_data, "scan_path", None))
+        version = read_software_version(yml) if yml is not None else None
+    except OSError:
+        return ()
+    if not version:
+        return ()
+    for (probe, prefix), nulls in KNOWN_SPECTRAL_NULLS.items():
+        if probe == preset and version.startswith(prefix):
+            return tuple(nulls)
+    return ()

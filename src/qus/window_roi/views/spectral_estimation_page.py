@@ -17,6 +17,7 @@ from typing import Optional
 
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.transforms import ScaledTranslation
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -26,21 +27,38 @@ from PyQt6.QtWidgets import (
 )
 
 from engines.qus.quantus.seg_loading.correlation_length import PROBE_PRESETS, positions_from_image
-from engines.qus.quantus.seg_loading.correlation_length.roi import sector_roi_from_rows_lines
+from engines.qus.quantus.seg_loading.correlation_length.roi import sector_roi_from_rows_lines, valid_band
 from engines.qus.quantus.seg_loading.power_spectrum_mtm import power_spectral_estimation_from_image
 from src.qus.seg_spectrum_check import seg_bounding_roi
-from src.qus.window_roi.probe import detect_probe_preset
+from src.qus.window_roi.probe import detect_probe_preset, known_spectral_nulls
 from src.qus.window_roi.windows import first_pass_band_for_roi
 from .common import (
     AXIAL, BG, LATERAL, MUTED, ROI, SIDEBAR_WIDTH, TEXT, UNUSABLE, USABLE, Worker, bmode_db, error_label,
     first_frame, heading, hint, results_box, separator, stop_worker, style_axes, style_legend,
 )
 
-BAND_STRICT = "Strict (valid in every window)"
-BAND_PCTL = "95th / 5th percentile"
-BAND_CHOICES = (BAND_STRICT, BAND_PCTL)   # combo index 0 / 1
+# analysis band: the strict shared band (valid in every window of the ROI); the 95th / 5th percentile
+# band is still computed (in the details) but not offered
+# legends sit below each plot, this far under its bottom edge: tick labels (8 pt) + x-axis title (9 pt)
+# + padding. The figure uses matplotlib's constrained layout, which makes room for them at any size.
+LEGEND_OFFSET_PT = 34
+FAILING_SNAP_PX = 15                      # a click this close (pixels) to a failing window selects it
 SAMPLE = "#4fe0d0"       # sample spectrum
 REFERENCE = "#ffd166"    # reference spectrum
+
+
+class SnapSpinBox(QDoubleSpinBox):
+    """Arrow / wheel steps land on multiples of the step (92 -> 95 / 90, then 5 % steps); typed values
+    are kept as typed."""
+
+    def stepBy(self, steps: int) -> None:
+        step = self.singleStep()
+        v = self.value()
+        if steps > 0:
+            target = (np.floor(v / step + 1e-9) + steps) * step
+        else:
+            target = (np.ceil(v / step - 1e-9) + steps) * step
+        self.setValue(min(max(target, self.minimum()), self.maximum()))
 
 
 class SpectralEstimationPage(QWidget):
@@ -62,7 +80,7 @@ class SpectralEstimationPage(QWidget):
         if roi_info is not None:
             self._roi = sector_roi_from_rows_lines(self._axial, self._lateral, roi_info["RF Rows"], roi_info["RF Lines"])
             band = roi_info.get("Band MHz")
-            if band is not None and np.all(np.isfinite(band)):
+            if valid_band(band):   # a reversed / missing band (no shared band) is recomputed in the ROI
                 self._band = tuple(float(v) for v in band)
         else:
             box = seg_bounding_roi(seg_data, rf.shape)   # r0, r1, c0, c1 (half-open)
@@ -72,6 +90,7 @@ class SpectralEstimationPage(QWidget):
         self._result = None
         self._worker: Optional[Worker] = None
         self._sel = None          # selected window (i, j)
+        self._grid_view = None    # zoomed (xlim, ylim) of the window grid plot, None = whole ROI
         self._build_ui()
         self._prefill()   # the main frame starts on the parameter confirmation
 
@@ -82,14 +101,14 @@ class SpectralEstimationPage(QWidget):
         side_frame = QFrame()
         side_frame.setFixedWidth(SIDEBAR_WIDTH + 40)
         side = QVBoxLayout(side_frame)
-        side.addWidget(heading("Power and Correlation Guided"))
+        side.addWidget(heading("Guided Config Setting Selection"))
         steps = QLabel(
             "<ul style='margin-left:-20px'>"
             "<li><b>Window size</b> from the correlation lengths inside your ROI</li>"
             "<li><b>Analysis band</b> from multitaper power spectra in every window, shared by sample "
             "and reference</li>"
-            "<li>Confirm the parameters, then compute (about 2 minutes)</li>"
-            "<li>Pick the band and press <b>Use for Analysis Config</b>: the window sizes, overlaps and "
+            "<li>Confirm the parameters, then compute</li>"
+            "<li>Press <b>Use for Analysis Config</b>: the window sizes, overlaps and "
             "band are passed to the analysis step</li></ul>")
         steps.setTextFormat(Qt.TextFormat.RichText)
         steps.setWordWrap(True)
@@ -107,8 +126,8 @@ class SpectralEstimationPage(QWidget):
         self._error = error_label()
         side.addWidget(self._error)
 
-        def spin(lo, hi, step, decimals, suffix=""):
-            s = QDoubleSpinBox()
+        def spin(lo, hi, step, decimals, suffix="", cls=QDoubleSpinBox):
+            s = cls()
             s.setRange(lo, hi)
             s.setSingleStep(step)
             s.setDecimals(decimals)
@@ -116,20 +135,26 @@ class SpectralEstimationPage(QWidget):
             s.setKeyboardTracking(False)
             return s
 
-        out = QFormLayout()
-        self._band_choice = QComboBox()
-        self._band_choice.addItems(list(BAND_CHOICES))
-        self._band_choice.setToolTip("Strict: valid in every window of the ROI. 95th / 5th percentile: "
-                                     "ignores the 5% most extreme windows at each edge.")
         self._win_thresh = spin(1, 100, 5, 0, " %")
         self._win_thresh.setValue(95)
-        self._win_thresh.setToolTip("Analysis config: share of a window that must lie inside the ROI")
-        out.addRow("Analysis band:", self._band_choice)
-        out.addRow("Config window threshold:", self._win_thresh)
-        self._out_widget = QWidget()
-        self._out_widget.setLayout(out)
-        self._out_widget.hide()          # shown with the results
-        side.addWidget(self._out_widget)
+        self._win_thresh.setToolTip("A window is analysed only if more than this share of it lies inside the ROI.")
+        nav = QHBoxLayout()
+        self._fail_prev = QToolButton()
+        self._fail_prev.setArrowType(Qt.ArrowType.LeftArrow)
+        self._fail_next = QToolButton()
+        self._fail_next.setArrowType(Qt.ArrowType.RightArrow)
+        self._fail_label = QLabel("")
+        self._fail_label.setStyleSheet(f"color: {UNUSABLE}; font-weight: bold;")
+        nav.addWidget(QLabel("Failing windows:"))
+        nav.addWidget(self._fail_prev)
+        nav.addWidget(self._fail_label)
+        nav.addWidget(self._fail_next)
+        nav.addStretch(1)
+        self._fail_nav = QWidget()
+        self._fail_nav.setLayout(nav)
+        self._fail_nav.setToolTip("Step through the windows that are not usable in sample and reference")
+        self._fail_nav.hide()
+        side.addWidget(self._fail_nav)
         self._change_button = QPushButton("Change parameters and recompute...")
         self._change_button.hide()
         side.addWidget(self._change_button)
@@ -151,11 +176,13 @@ class SpectralEstimationPage(QWidget):
         self._advanced = QWidget()
         adv = QVBoxLayout(self._advanced)
         adv.setContentsMargins(8, 0, 0, 0)
-        adv.addWidget(hint("Uses appropriate presets for each probe. Changes apply the next time you compute."))
+        adv.addWidget(hint("Uses appropriate presets for each probe. Changes apply the next time you compute "
+                           "(window inclusion coverage: when you press Use for Analysis Config)."))
         form = QFormLayout()
         form.addRow("Correlation threshold:", self._threshold)
         form.addRow("Kappa (W / bandwidth):", self._kappa)
         form.addRow("Avoid frequencies (MHz):", self._avoid)
+        form.addRow("Window inclusion coverage:", self._win_thresh)
         adv.addLayout(form)
         self._details = results_box()
         self._details.hide()
@@ -198,8 +225,8 @@ class SpectralEstimationPage(QWidget):
         self._win_wid = spin(0.1, 200, 0.5, 2, " mm")
         self._ax_factor = spin(0.5, 50, 0.5, 1, " x")
         self._lat_factor = spin(0.5, 50, 0.5, 1, " x")
-        self._ov_ax = spin(0, 99, 1, 0, " %")
-        self._ov_lat = spin(0, 99, 1, 0, " %")
+        self._ov_ax = spin(0, 95, 5, 0, " %", cls=SnapSpinBox)
+        self._ov_lat = spin(0, 95, 5, 0, " %", cls=SnapSpinBox)
         self._win_len.setToolTip("Size of the region the correlation length is measured in, at each depth")
         self._win_wid.setToolTip("Size of the region the correlation length is measured in, at each depth")
         self._ax_factor.setToolTip("Window size = factor x correlation length (the largest over the ROI depths)")
@@ -255,8 +282,8 @@ class SpectralEstimationPage(QWidget):
         self._busy_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._busy_title.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {TEXT};")
         busy.addWidget(self._busy_title)
-        self._busy_sub = QLabel("About 2 minutes. The window sizes, overlaps and analysis band are then "
-                                "passed to the analysis step.")
+        self._busy_sub = QLabel("The window sizes, overlaps and analysis band are then passed to the "
+                                "analysis step.")
         self._busy_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._busy_sub.setWordWrap(True)
         self._busy_sub.setStyleSheet(f"font-size: 14px; color: {MUTED};")
@@ -283,12 +310,35 @@ class SpectralEstimationPage(QWidget):
 
         self._compute_button.clicked.connect(self._compute)
         self._change_button.clicked.connect(self._show_confirm)
+        self._fail_prev.clicked.connect(lambda: self._step_failing(-1))
+        self._fail_next.clicked.connect(lambda: self._step_failing(+1))
         self._cancel_change.clicked.connect(lambda: self._main.setCurrentWidget(self._canvas))
-        self._band_choice.currentIndexChanged.connect(lambda _: self._result is not None and self._on_band_choice())
         self._accept_button.clicked.connect(self._on_accept)
         self._back_button.clicked.connect(self.back_requested.emit)
         self._canvas.mpl_connect("button_press_event", self._on_click)
+        self._canvas.mpl_connect("scroll_event", self._on_scroll)
         self._accept_button.setEnabled(False)
+
+    def _failing(self) -> np.ndarray:
+        """(row, col) of the windows not usable in sample and reference, top to bottom."""
+        return np.argwhere(~self._result.bandwidth.shared_usable)
+
+    def _step_failing(self, step: int) -> None:
+        fail = self._failing()
+        if not len(fail):
+            return
+        here = np.flatnonzero((fail == np.asarray(self._sel)).all(axis=1))
+        k = (here[0] + step) % len(fail) if len(here) else (0 if step > 0 else len(fail) - 1)
+        self._select(fail[k])
+
+    def _update_failing_nav(self) -> None:
+        if self._result is None:
+            self._fail_nav.hide()
+            return
+        fail = self._failing()
+        self._fail_nav.setVisible(len(fail) > 0)
+        here = np.flatnonzero((fail == np.asarray(self._sel)).all(axis=1)) if len(fail) else []
+        self._fail_label.setText(f"{here[0] + 1} of {len(fail)}" if len(here) else f"{len(fail)}")
 
     def _show_confirm(self) -> None:
         """Parameter confirmation in the main frame ('Back to results' once there are results)."""
@@ -313,7 +363,13 @@ class SpectralEstimationPage(QWidget):
         self._ax_factor.setValue(cs.get("ax_window_factor", 10.0))
         self._lat_factor.setValue(cs.get("lat_window_factor", 5.0))
         self._kappa.setValue(0.2)
-        self._ov_ax.setValue(92)
+        nulls = known_spectral_nulls(self._image)   # e.g. L20 on software 13.0.0: 7.5 MHz
+        self._avoid.setText(", ".join(f"{v:g}" for v in nulls))
+        if nulls:
+            self._confirm_sub.setText(self._confirm_sub.text() + " The known spectral null of this probe / "
+                                      f"software at {', '.join(f'{v:g}' for v in nulls)} MHz is kept out of the band "
+                                      "(Advanced settings).")
+        self._ov_ax.setValue(90)
         self._ov_lat.setValue(85)
         if self._roi is None:
             self._roi_label.setText("")
@@ -326,7 +382,7 @@ class SpectralEstimationPage(QWidget):
     def _show_roi_label(self) -> None:
         (r1, r2), (l1, l2) = self._roi.rows, self._roi.lines
         d0, d1 = self._roi.depth_range_mm
-        source = "bounding A-lines / depths of the segmentation" if self._info is None else "Power Guided ROI"
+        source = "bounding A-lines / depths of the segmentation" if self._info is None else "Guided ROI"
         self._roi_label.setText(f"ROI ({source}): A-lines {l1}-{l2}, depth {d0:.1f}-{d1:.1f} mm")
 
     def _avoid_freqs(self) -> tuple:
@@ -369,8 +425,8 @@ class SpectralEstimationPage(QWidget):
         self._compute_button.setEnabled(False)
         self._results.hide()
         self._details.hide()
-        self._out_widget.hide()
         self._change_button.hide()
+        self._fail_nav.hide()
         self._progress.setValue(0)
         self._progress_label.setText("Starting...")
         self._set_busy(True)
@@ -399,7 +455,6 @@ class SpectralEstimationPage(QWidget):
         self._result = result
         self._set_busy(False)
         self._results.show()
-        self._out_widget.show()
         self._change_button.show()
         self._show_roi_label()   # shows the first-pass band if it was computed in this run
         p, g, bw = result.parameters, result.grid, result.bandwidth
@@ -409,13 +464,13 @@ class SpectralEstimationPage(QWidget):
             for nw, k, w, wb, s in zip(c.nw, c.k, c.w_mhz, c.w_over_b, c.status))
         note = f"<br><span style='color:{UNUSABLE}'><b>{p.note}</b></span>" if p.note else ""
         n_note = (f"<br><span style='color:{MUTED}'>Grid windows are {int(g.ax_lengths[0])} samples; NW chosen "
-                  f"for N = {p.n} (as the MATLAB)</span>" if int(g.ax_lengths[0]) != p.n else "")
+                  f"for N = {p.n}</span>" if int(g.ax_lengths[0]) != p.n else "")
         usable_colour = TEXT if bw.n_usable == bw.n_windows else UNUSABLE
         self._results.setText(
             f"<b>Window size</b>: <b>{result.ax_window_mm:.1f} mm</b> axial \u00d7 "
             f"<b>{result.lat_window_mm:.1f} mm</b> lateral<br>"
-            f"<b>Analysis band</b>: strict {bw.shared_strict[0]:.1f} - {bw.shared_strict[1]:.1f} MHz, "
-            f"95/5 pct {bw.shared_pctl[0]:.1f} - {bw.shared_pctl[1]:.1f} MHz<br>"
+            f"<b>Analysis band</b>: <b>{bw.shared_strict[0]:.1f} - {bw.shared_strict[1]:.1f} MHz</b> "
+            f"(valid in every window)<br>"
             f"<span style='color:{usable_colour}'>{bw.n_usable} of {bw.n_windows} windows usable in sample and "
             f"reference</span>{note}")
         self._details.show()
@@ -433,11 +488,11 @@ class SpectralEstimationPage(QWidget):
             f"{g.lat_overlap.min():.0%} lateral<br>"
             f"<span style='color:{usable_colour}'><b>{bw.n_usable} of {bw.n_windows}</b> windows usable in sample "
             f"and reference</span><br>"
-            f"<b>Shared band</b>: strict {bw.shared_strict[0]:.1f}-{bw.shared_strict[1]:.1f} MHz, "
-            f"95/5 pct {bw.shared_pctl[0]:.1f}-{bw.shared_pctl[1]:.1f} MHz")
-        self._update_band_labels()
+            f"<b>Shared band</b> (valid in every window): {bw.shared_strict[0]:.1f}-{bw.shared_strict[1]:.1f} MHz")
         self._accept_button.setEnabled(bool(np.all(np.isfinite(self._chosen_band()))))
         self._sel = self._default_window()
+        self._grid_view = None
+        self._update_failing_nav()
         try:
             self._redraw()
         except Exception as e:  # never let a plotting problem take down the app
@@ -456,20 +511,9 @@ class SpectralEstimationPage(QWidget):
         self._advanced.setVisible(open_)
         self._advanced_toggle.setArrowType(Qt.ArrowType.DownArrow if open_ else Qt.ArrowType.RightArrow)
 
-    def _update_band_labels(self) -> None:
-        """Show each band's values in the band choice."""
-        bw = self._result.bandwidth
-        for i, (name, band) in enumerate(zip(BAND_CHOICES, (bw.shared_strict, bw.shared_pctl))):
-            value = (f"{band[0]:.1f} - {band[1]:.1f} MHz" if np.all(np.isfinite(band)) else "none")
-            self._band_choice.setItemText(i, f"{value}  ({name.split(' (')[0].lower()})")
-
-    def _on_band_choice(self) -> None:
-        self._accept_button.setEnabled(bool(np.all(np.isfinite(self._chosen_band()))))
-        self._redraw()
-
     def _chosen_band(self) -> tuple:
-        bw = self._result.bandwidth
-        return bw.shared_strict if self._band_choice.currentIndex() == 0 else bw.shared_pctl
+        """The analysis band: the strict shared band (valid in every window)."""
+        return self._result.bandwidth.shared_strict
 
     def _default_window(self):
         """Deepest row, middle column (as DetermineBW_ROI's example spectrum)."""
@@ -477,17 +521,27 @@ class SpectralEstimationPage(QWidget):
         return n_ax - 1, n_lat // 2
 
     # ------------------------------------------------------------------ figure
+    def _legend_below(self, ax, **kwargs) -> None:
+        """Legend centred below the axes, LEGEND_OFFSET_PT under its bottom edge (clear of the x-axis
+        tick labels and title at any figure size)."""
+        off = ScaledTranslation(0, -LEGEND_OFFSET_PT / 72, ax.figure.dpi_scale_trans)
+        style_legend(ax.legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, 0.0),
+                               bbox_transform=ax.transAxes + off, **kwargs))
+
     def _redraw(self) -> None:
         r = self._result
         fig = self._fig
         fig.clear()
-        gs = fig.add_gridspec(2, 2, wspace=0.28, hspace=0.42, left=0.07, right=0.97, top=0.9, bottom=0.1)
+        # constrained layout: room for every title, axis label and legend, recomputed at each draw / resize
+        fig.set_layout_engine("constrained", h_pad=0.08, w_pad=0.08, hspace=0.06, wspace=0.06)
+        gs = fig.add_gridspec(2, 2)
+        # top: window size and band vs depth; bottom: the window grid (click) and that window's spectra
         self._plot_correlation(fig.add_subplot(gs[0, 0]))
-        self._ax_grid = fig.add_subplot(gs[0, 1])
+        self._plot_band_depth(fig.add_subplot(gs[0, 1]))
+        self._ax_grid = fig.add_subplot(gs[1, 0])
         self._plot_grid(self._ax_grid)
-        self._ax_spec = fig.add_subplot(gs[1, 0])
+        self._ax_spec = fig.add_subplot(gs[1, 1])
         self._plot_spectra(self._ax_spec)
-        self._plot_band_depth(fig.add_subplot(gs[1, 1]))
         lo, hi = self._chosen_band()
         fig.suptitle(f"Multitaper Power Spectra in the ROI: NW {r.parameters.nw:g}, {r.ax_window_mm:.1f} x "
                      f"{r.lat_window_mm:.1f} mm Windows\nAnalysis Band {lo:.1f} - {hi:.1f} MHz", color=TEXT,
@@ -511,7 +565,7 @@ class SpectralEstimationPage(QWidget):
         finals = [v for v in (r.ax_window_mm, r.lat_window_mm) if np.isfinite(v)]
         ax.set_xlim(0, 1.3 * max(finals) if finals else None)
         style_axes(ax, "Suggested Window Size vs. Depth", "Window size (mm)", "Depth (mm)")
-        style_legend(ax.legend(fontsize=8, loc="lower right"))
+        self._legend_below(ax, ncol=2)
 
     def _plot_grid(self, ax) -> None:
         r = self._result
@@ -519,9 +573,10 @@ class SpectralEstimationPage(QWidget):
                       rasterized=True)
         x, z = r.grid.centres_mm(self._axial, self._lateral)
         u = r.bandwidth.shared_usable
-        ax.scatter(x[u], z[u], s=1.5, color=USABLE, linewidths=0, label="Usable window centre", rasterized=True)
-        if (~u).any():
-            ax.scatter(x[~u], z[~u], s=4, color=UNUSABLE, linewidths=0, label="Not usable", rasterized=True)
+        # usable windows are not marked (they cover the ROI); only the failing ones are
+        if (~u).any():   # failing windows: large markers on top, easy to see and click
+            ax.scatter(x[~u], z[~u], s=36, marker="x", color=UNUSABLE, linewidths=1.6, zorder=5,
+                       label=f"Not usable ({int((~u).sum())})")
         roi = self._roi
         ax.plot(np.r_[roi.x_mm, roi.x_mm[0]], np.r_[roi.z_mm, roi.z_mm[0]], color=ROI, linewidth=2, label="ROI")
         i, j = self._sel
@@ -531,13 +586,18 @@ class SpectralEstimationPage(QWidget):
         bx = np.r_[self._lateral[rows[0], cols], self._lateral[rows[1], cols[::-1]], self._lateral[rows[0], cols[0]]]
         bz = np.r_[self._axial[rows[0], cols], self._axial[rows[1], cols[::-1]], self._axial[rows[0], cols[0]]]
         ax.plot(bx, bz, color="white", linewidth=1.5, label="Selected window")
-        pad = 5.0
-        ax.set_xlim(roi.x_mm.min() - pad, roi.x_mm.max() + pad)
-        ax.set_ylim(roi.z_mm.max() + pad, max(roi.z_mm.min() - pad, float(np.nanmin(self._axial))))
         ax.set_aspect("equal", adjustable="datalim")
-        style_axes(ax, "Window Grid (Click a Window to Show Its Spectra)", "Lateral (mm)", "Depth (mm)")
+        if self._grid_view is not None:   # keep the user's zoom across redraws
+            ax.set_xlim(*self._grid_view[0])
+            ax.set_ylim(*self._grid_view[1])
+        else:
+            pad = 5.0
+            ax.set_xlim(roi.x_mm.min() - pad, roi.x_mm.max() + pad)
+            ax.set_ylim(roi.z_mm.max() + pad, max(roi.z_mm.min() - pad, float(np.nanmin(self._axial))))
+        style_axes(ax, "Window Grid (Click a Window to Show Its Spectra)" if u.all() else
+                   "Window Grid (Click a Window, e.g. a Red \u2715; Scroll to Zoom)", "Lateral (mm)", "Depth (mm)")
         ax.grid(False)
-        style_legend(ax.legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=4, markerscale=4))
+        self._legend_below(ax, ncol=2, markerscale=2)
 
     def _plot_spectra(self, ax) -> None:
         r = self._result
@@ -571,7 +631,7 @@ class SpectralEstimationPage(QWidget):
                        + ("" if ok else "  (Not Usable)"), "Frequency (MHz)", "Power (dB)")
         if not ok:
             ax.title.set_color(UNUSABLE)
-        style_legend(ax.legend(fontsize=7, loc="upper right"))
+        self._legend_below(ax, ncol=2)
 
     def _plot_band_depth(self, ax) -> None:
         r = self._result
@@ -585,24 +645,51 @@ class SpectralEstimationPage(QWidget):
         ax.fill_betweenx(d, lo_min, hi_min, color=USABLE, alpha=0.15, linewidth=0, label="Valid in every window of row")
         ax.plot(lo, d, color=USABLE, linewidth=2, label="Shared band, row mean")
         ax.plot(hi, d, color=USABLE, linewidth=2)
-        for band, style, label in ((bw.shared_strict, "-", "Strict"), (bw.shared_pctl, "--", "95/5 pct")):
-            for k, v in enumerate(band):
-                if np.isfinite(v):
-                    ax.axvline(v, color="white", linestyle=style, linewidth=1.3, label=label if k == 0 else None)
+        for k, v in enumerate(bw.shared_strict):
+            if np.isfinite(v):
+                ax.axvline(v, color="white", linewidth=1.3, label="Analysis band" if k == 0 else None)
         bad_rows = ~bw.shared_usable.all(axis=1)
         if bad_rows.any():
             ax.plot(np.full(bad_rows.sum(), 0.02 * max(np.nanmax(np.r_[hi, 1]), 1)), d[bad_rows], "x",
                     color=UNUSABLE, label="Row with unusable windows")
         ax.invert_yaxis()
         style_axes(ax, "Shared Band vs. Depth", "Frequency (MHz)", "Depth (mm)")
-        style_legend(ax.legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=3))
+        self._legend_below(ax, ncol=2)
+
+    def _on_scroll(self, event) -> None:
+        """Scroll on the window grid: zoom in / out around the cursor."""
+        ax = getattr(self, "_ax_grid", None)
+        if self._result is None or event.inaxes is not ax or event.xdata is None:
+            return
+        f = 0.8 if event.step > 0 else 1.25
+        (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()
+        cx, cy = event.xdata, event.ydata
+        self._grid_view = ((cx + (x0 - cx) * f, cx + (x1 - cx) * f), (cy + (y0 - cy) * f, cy + (y1 - cy) * f))
+        ax.set_xlim(*self._grid_view[0])
+        ax.set_ylim(*self._grid_view[1])
+        self._canvas.draw_idle()
 
     def _on_click(self, event) -> None:
         if self._result is None or event.inaxes is not getattr(self, "_ax_grid", None) or event.xdata is None:
             return
+        if event.dblclick:   # double-click: back to the whole ROI
+            self._grid_view = None
+            self._redraw()
+            return
         x, z = self._result.grid.centres_mm(self._axial, self._lateral)
-        k = int(np.argmin((x - event.xdata) ** 2 + (z - event.ydata) ** 2))
-        self._sel = np.unravel_index(k, x.shape)
+        # distances in screen pixels, so "near" means the same at any zoom / aspect
+        pts = self._ax_grid.transData.transform(np.c_[x.ravel(), z.ravel()])
+        d2 = (pts[:, 0] - event.x) ** 2 + (pts[:, 1] - event.y) ** 2
+        failing = ~self._result.bandwidth.shared_usable.ravel()
+        if failing.any() and d2[failing].min() <= FAILING_SNAP_PX ** 2:
+            k = int(np.flatnonzero(failing)[np.argmin(d2[failing])])   # a failing window near the click wins
+        else:
+            k = int(np.argmin(d2))
+        self._select(np.unravel_index(k, x.shape))
+
+    def _select(self, sel) -> None:
+        self._sel = tuple(int(v) for v in sel)
+        self._update_failing_nav()
         try:
             self._redraw()
         except Exception as e:
@@ -623,6 +710,11 @@ class SpectralEstimationPage(QWidget):
             "ax_win_size": float(r.ax_window_mm),
             "lat_win_size": float(r.lat_window_mm),
             "ax_win_size_units": "mm",
+            # TODO(curvilinear, flagged 2026-11-19): the analysis converts this mm size to A-lines with
+            # image_data.lateral_res, which for Clarius curvilinear probes is a placeholder (parser.py
+            # xResRF = yResRF * scan-converted aspect, 0.035 mm on C3 vs a real 0.39-1.01 mm A-line spacing
+            # in the ROI), e.g. 11 mm -> 313 A-lines > 192, so no windows. Options: pass A-lines here
+            # (mm / mean A-line spacing in the ROI), or fix xResRF for curvilinear probes in the loader.
             "lat_win_size_units": "mm",
             "window_thresh": float(self._win_thresh.value() / 100),
             "axial_overlap": float(self._ov_ax.value() / 100),

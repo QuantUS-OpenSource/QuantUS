@@ -16,8 +16,10 @@ from engines.qus.quantus.data_objs import UltrasoundRfImage
 # Cards shown on this screen. "seg_type" is the display name the model's set_seg_type() expects
 # (backend loaders pkl_roi / nifti_voi are shown as "Pkl roi" / "Nifti voi").
 SEG_TYPE_CARDS = [
-    {"key": "power", "seg_type": POWER_GUIDED_ROI, "title": "Power Guided ROI",
-     "description": "Uses the power spectrum to guide ROI placement on the B-mode image", "badge": "guided"},
+    {"key": "power", "seg_type": POWER_GUIDED_ROI, "title": "Guided ROI",
+     "description": "Draw with guides: usable power signal, speckle-based window sizes, and possible "
+                    "vessels and bright reflectors",
+     "badge": "guided"},
     {"key": "manual", "seg_type": "Manual Segmentation", "title": "Manual Segmentation",
      "description": "Draw an ROI or VOI directly on the B-mode image", "badge": "draw"},
     {"key": "load_roi", "seg_type": "Pkl roi", "title": "Load ROI",
@@ -25,7 +27,7 @@ SEG_TYPE_CARDS = [
     {"key": "load_voi", "seg_type": "Nifti voi", "title": "Load VOI",
      "description": "Import a saved 3D volume of interest from a file", "badge": "3D · file"},
 ]
-# Power Guided ROI has its own band check, so the spectrum check toggle is hidden for it
+# Guided ROI has its own band check, so the spectrum check toggle is hidden for it
 NO_SPECTRUM_TOGGLE = {"power"}
 
 ACCEPT_STYLE = """

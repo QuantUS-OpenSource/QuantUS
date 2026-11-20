@@ -2,7 +2,7 @@
 Config Type Selection Widget for Config Loading
 
 Option cards for the analysis configuration (the generated .ui's dropdown is hidden and replaced):
-  Power & Correlation Guided  multitaper spectra over the ROI (any 2D ROI on the RF data)
+  Guided Config Setting Selection  multitaper spectra over the ROI (any 2D ROI on the RF data)
   Probe Preset                one card for every scanner preset loader; a dropdown on the card
                               starts on the preset matching the scan's probe (if known)
   Custom                      parameters entered by hand
@@ -113,7 +113,7 @@ class ConfigTypeSelectionWidget(QWidget, BaseViewMixin):
         self._preset_combo = QComboBox()
         self._preset_combo.setPlaceholderText("Choose a preset...")
         self._cards = OptionCardGrid([
-            {"key": "power", "title": "Power & Correlation Guided",
+            {"key": "power", "title": "Guided Config Setting Selection",
              "description": "Correlation lengths and multitaper spectra in your ROI set the window sizes and band",
              "badge": "guided"},
             {"key": "preset", "title": "Probe Preset",

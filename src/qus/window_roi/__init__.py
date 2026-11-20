@@ -1,9 +1,9 @@
 """Power Guided ROI Selection: a segmentation type (correlation-length windows -> first-pass power
 check -> ROI drawn with a live band check). Lightweight names here; the widget is in views/."""
 
-POWER_GUIDED_ROI = "Power Guided ROI Selection"
+POWER_GUIDED_ROI = "Guided ROI"   # shown as "Guided ROI" (was "Power Guided ROI Selection")
 # analysis config type: multitaper spectra over a Power Guided ROI -> band, windows (views/spectral_estimation_page.py)
-POWER_CORRELATION_GUIDED = "Power and Correlation Guided"
+POWER_CORRELATION_GUIDED = "Guided Config Setting Selection"   # was "Power and Correlation Guided"
 
 
 def power_guided_roi_supported(image_data) -> bool:

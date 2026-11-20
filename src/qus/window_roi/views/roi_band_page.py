@@ -13,12 +13,16 @@ from matplotlib.widgets import RectangleSelector
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QFrame, QPushButton, QLineEdit, QMessageBox, QDoubleSpinBox,
-    QComboBox, QLabel,
+    QComboBox, QLabel, QCheckBox, QSlider, QScrollArea,
 )
 
 from engines.qus.quantus.seg_loading.correlation_length import (
     NyquistError, calc_first_pass_from_image, intersect_first_pass, positions_from_image,
 )
+from engines.qus.quantus.seg_loading.correlation_length.first_pass import (
+    ABOVE_NOISE_DB, MIN_SIGNAL_POWER_DB, with_usable_level,
+)
+from engines.qus.quantus.seg_loading.nakagami_confidence import VESSEL_THRESHOLD, nakagami_confidence_from_image
 from engines.qus.quantus.seg_loading.correlation_length.roi import check_sector_roi, save_roi_pkl, sector_roi_from_box
 from src.qus.window_roi import POWER_GUIDED_ROI
 from .common import (
@@ -27,6 +31,9 @@ from .common import (
 )
 
 NOTE_YELLOW = "#ffd84d"   # "quick power check only" note
+RIGHT_TITLE = "Power Spectra vs Frequency vs Depth\n(Laterally Averaged, Entire Image)"
+VESSEL = "#3fe0ff"        # vessel outline (poor Nakagami fit, darker)
+BRIGHT = "#ff9f43"        # bright-reflector outline (poor Nakagami fit, brighter)
 
 
 class RoiBandPage(QWidget):
@@ -51,7 +58,14 @@ class RoiBandPage(QWidget):
         self._job = None   # settings of the first pass that is running / last ran
         self._worker: Optional[Worker] = None
         self._selector: Optional[RectangleSelector] = None
+        self._naka = None                 # NakagamiConfidence of the sample frame (vessels)
+        self._naka_error: Optional[str] = None
+        self._vessel_artists = []
         self._build_ui()
+        self._naka_worker: Optional[Worker] = Worker(lambda: nakagami_confidence_from_image(self._image), self)
+        self._naka_worker.done.connect(self._on_nakagami)
+        self._naka_worker.failed.connect(self._on_nakagami_failed)
+        self._naka_worker.start()
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
@@ -60,7 +74,7 @@ class RoiBandPage(QWidget):
         side_frame = QFrame()
         side_frame.setFixedWidth(340)
         side = QVBoxLayout(side_frame)
-        side.addWidget(heading("Power Guided ROI"))
+        side.addWidget(heading("Guided ROI"))
         side.addWidget(hint(f"Sample: {self._image.scan_name}\nReference: {self._image.phantom_name}"))
         side.addWidget(separator())
         self._window_box = results_box()
@@ -91,7 +105,40 @@ class RoiBandPage(QWidget):
         self._spectrum_src.addItems(["Sample", "Reference"])
         self._spectrum_src.setToolTip("Power spectrum shown behind the bandwidth plot (all lines averaged, dB)")
         form.addRow("Spectrum shown:", self._spectrum_src)
+        self._show_vessels = QCheckBox("Show possible vessels")
+        self._show_vessels.setChecked(True)
+        self._show_vessels.setToolTip("Outline regions whose echo amplitudes deviate from a Nakagami fit (KS test) "
+                                      "and that are darker than the tissue at that depth")
+        form.addRow(self._show_vessels)
+        self._show_bright = QCheckBox("Show possible bright reflectors")
+        self._show_bright.setChecked(True)
+        self._show_bright.setToolTip("Outline regions whose echo amplitudes deviate from a Nakagami fit (KS test) "
+                                     "and that are brighter than the tissue at that depth (vessel walls, septa, "
+                                     "ligaments): they bias the backscatter up and the Nakagami m down")
+        form.addRow(self._show_bright)
         side.addLayout(form)
+
+        # thresholds: draggable
+        self._power_label = QLabel()
+        self._power_slider = QSlider(Qt.Orientation.Horizontal)
+        self._power_slider.setRange(int(ABOVE_NOISE_DB), 30)           # total dB above the noise floor
+        self._power_slider.setValue(int(round(ABOVE_NOISE_DB + MIN_SIGNAL_POWER_DB)))
+        self._power_slider.setToolTip("A block is usable (magenta) if its peak is at least this far above the "
+                                      "noise floor in both sample and reference (default 15 dB). Band edges stay "
+                                      f"at the noise floor + {ABOVE_NOISE_DB:g} dB.")
+        side.addWidget(self._power_label)
+        side.addWidget(self._power_slider)
+        self._naka_label = QLabel()
+        self._naka_slider = QSlider(Qt.Orientation.Horizontal)
+        self._naka_slider.setRange(2, 30)                               # x 0.01
+        self._naka_slider.setValue(int(round(VESSEL_THRESHOLD * 100)))
+        self._naka_slider.setToolTip("Nakagami fit deviation (KS test), 0-1: the largest difference between a "
+                                     "window's echo-amplitude distribution and the fitted Nakagami distribution "
+                                     "(Kolmogorov-Smirnov statistic). Above it: possible vessel (darker) or bright "
+                                     "reflector (brighter). Default 0.10.")
+        side.addWidget(self._naka_label)
+        side.addWidget(self._naka_slider)
+        self._update_threshold_labels()
         self._fp_box = results_box()
         side.addWidget(self._fp_box)
         self._roi_box = results_box()
@@ -103,20 +150,24 @@ class RoiBandPage(QWidget):
         self._back_button = QPushButton("‹  Back: segmentation type")
         for b in (self._accept_button, self._back_button):
             side.addWidget(b)
-        root.addWidget(side_frame)
+        scroll = QScrollArea()            # scrolls only if the window is too short for the sidebar
+        scroll.setWidget(side_frame)
+        scroll.setWidgetResizable(True)
+        scroll.setFixedWidth(side_frame.width() + 20)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        root.addWidget(scroll)
 
         # drawing instructions right above the image, where the user is looking
         main = QVBoxLayout()
-        instructions = QLabel(
-            f"<span style='color:{USABLE}; font-weight:bold'>Magenta outline</span>: enough signal in sample "
-            "AND reference (peak &ge; noise floor + 15 dB).&nbsp;&nbsp;<b>Drag a box</b> on the B-mode to draw "
-            "the ROI (it follows the beam lines). <b>Drag inside it to move it</b>, drag its handles to resize; "
-            "the band check updates when you let go. <b>Accept ROI</b> (or Enter on the image) to accept.")
+        instructions = QLabel()
+        self._instructions = instructions
         instructions.setTextFormat(Qt.TextFormat.RichText)
         instructions.setWordWrap(True)
         instructions.setStyleSheet(f"color: {TEXT}; font-size: 14px; padding: 8px 12px; "
                                    "border: 1px solid rgb(90, 90, 90); border-radius: 6px;")
         main.addWidget(instructions)
+        self._update_instructions()
         self._fig = Figure(facecolor=BG)
         self._canvas = FigureCanvas(self._fig)
         self._canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -127,11 +178,84 @@ class RoiBandPage(QWidget):
         self._step.valueChanged.connect(lambda _: self._run_first_pass())
         self._adjust_button.clicked.connect(self.adjust_requested.emit)
         self._spectrum_src.currentTextChanged.connect(lambda _: self._intersect is not None and self._draw())
+        self._show_vessels.toggled.connect(lambda _: self._update_vessels())
+        self._show_bright.toggled.connect(lambda _: self._update_vessels())
+        self._power_slider.valueChanged.connect(self._on_power_slider)
+        self._power_slider.sliderReleased.connect(self._apply_power_level)
+        self._naka_slider.valueChanged.connect(self._on_naka_slider)
+        self._naka_slider.sliderReleased.connect(self._update_vessels)
         self._accept_button.clicked.connect(self._on_accept)
         self._back_button.clicked.connect(self.back_requested.emit)
         # Enter accepts only while the image has focus (not while typing in the step / save path)
         self._canvas.mpl_connect("key_press_event", lambda e: e.key == "enter" and self._on_accept())
         self._accept_button.setEnabled(False)
+
+    # ------------------------------------------------------------------ thresholds (sliders)
+    def _vthr(self) -> float:
+        """Nakagami fit deviation (KS test) threshold."""
+        return self._naka_slider.value() / 100
+
+    def _power_total_db(self) -> float:
+        """Usable level: peak at least this many dB above the noise floor."""
+        return float(self._power_slider.value())
+
+    def _update_threshold_labels(self) -> None:
+        self._power_label.setText(f"Usable signal: peak \u2265 noise floor + <b>{self._power_total_db():.0f} dB</b>")
+        self._naka_label.setText(f"Nakagami fit deviation (KS test) threshold: <b>{self._vthr():.2f}</b>")
+
+    def _update_instructions(self) -> None:
+        self._instructions.setText(
+            f"<span style='color:{USABLE}; font-weight:bold'>Magenta outline</span>: enough signal in sample "
+            f"AND reference (peak &ge; noise floor + {self._power_total_db():.0f} dB).&nbsp;&nbsp;<b>Drag a box</b> "
+            "on the B-mode to draw the ROI (it follows the beam lines). <b>Drag inside it to move it</b>, drag its "
+            "handles to resize; the band check updates when you let go. <b>Accept ROI</b> (or Enter on the image) "
+            "to accept. The sliders on the left set both thresholds.<br>"
+            f"<span style='color:{VESSEL}; font-weight:bold'>Cyan outline</span>: possible vessel (Nakagami fit "
+            f"deviation (KS test) above {self._vthr():.2f}, and darker than the tissue at that depth).<br>"
+            f"<span style='color:{BRIGHT}; font-weight:bold'>Orange outline</span>: possible bright reflector (Nakagami "
+            f"fit deviation above {self._vthr():.2f}, brighter: vessel wall, septum, ligament). The ROI box shows how "
+            "much of the ROI each covers.")
+
+    def _on_naka_slider(self, _value) -> None:
+        self._update_threshold_labels()
+        self._update_instructions()
+        if self._naka_slider.isSliderDown():      # live while dragging: outlines only
+            if self._intersect is not None:
+                self._draw_vessels()
+                self._canvas.draw_idle()
+        else:                                      # keyboard / click: full update
+            self._update_vessels()
+
+    def _on_power_slider(self, _value) -> None:
+        self._update_threshold_labels()
+        self._update_instructions()
+        if not self._power_slider.isSliderDown():  # keyboard / click; dragging applies on release
+            self._apply_power_level()
+
+    def _leveled(self, intersect):
+        """The first pass with the slider's usable level (stored signal powers, nothing recomputed)."""
+        m = self._power_total_db() - intersect.sample.above_noise_db
+        return intersect_first_pass(with_usable_level(intersect.sample, m), with_usable_level(intersect.reference, m))
+
+    def _apply_power_level(self) -> None:
+        raw = getattr(self, "_intersect_raw", None)
+        if raw is None:
+            return
+        self._intersect = self._leveled(raw)
+        self._show_first_pass_summary()
+        try:
+            self._draw()
+        except Exception as e:
+            self.show_error(f"Could not draw the first pass: {e}")
+
+    def _show_first_pass_summary(self) -> None:
+        inter = self._intersect
+        s, r = inter.sample, inter.reference
+        self._fp_box.setText(
+            f"<b>First pass</b>: {s.window_length_mm:.1f} mm axial window ({s.window_samples} samples), "
+            f"{s.block_width_mm:.1f} mm blocks ({s.block_lines} lines), fs {s.fs_mhz:g} MHz<br>"
+            f"Usable blocks (peak &ge; noise + {self._power_total_db():.0f} dB): sample {s.usable_2d.mean():.0%}, "
+            f"reference {r.usable_2d.mean():.0%}, <b>both {inter.usable_both_2d.mean():.0%}</b>")
 
     def _default_save_path(self) -> Path:
         scan = Path(getattr(self._image, "scan_path", "") or ".")
@@ -199,13 +323,9 @@ class RoiBandPage(QWidget):
         if self._job != self._settings():   # window / step changed while this one ran: run again
             self._run_first_pass()
             return
-        self._intersect = intersect
-        s, r = intersect.sample, intersect.reference
-        self._fp_box.setText(
-            f"<b>First pass</b>: {s.window_length_mm:.1f} mm axial window ({s.window_samples} samples), "
-            f"{s.block_width_mm:.1f} mm blocks ({s.block_lines} lines), fs {s.fs_mhz:g} MHz<br>"
-            f"Usable blocks: sample {s.usable_2d.mean():.0%}, reference {r.usable_2d.mean():.0%}, "
-            f"<b>both {intersect.usable_both_2d.mean():.0%}</b>")
+        self._intersect_raw = intersect            # as computed (default level)
+        self._intersect = self._leveled(intersect)  # with the slider's usable level
+        self._show_first_pass_summary()
         self._roi_box.setText("Drag a box on the B-mode to draw the ROI.")
         try:
             self._draw()
@@ -257,7 +377,8 @@ class RoiBandPage(QWidget):
         ax.fill([], [], color=UNUSABLE, alpha=0.25, label="Not usable")
         ax.set_aspect("equal", adjustable="datalim")
         style_axes(ax, "Sample B-Mode: Drag a Box to Draw the ROI", "Lateral (mm)", "Depth (mm)")
-        style_legend(ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=4, fontsize=8))
+        self._vessel_artists = []
+        self._draw_vessels()
 
         axr = self._ax_r
         d = s.depths
@@ -281,7 +402,7 @@ class RoiBandPage(QWidget):
         self._bad_rows, = axr.plot([], [], "x", color=UNUSABLE, markersize=8, mew=1.5, label="Unusable row")
         fmax = np.nanmax(np.r_[s.f_high, inter.reference.f_high, 0])
         axr.set_xlim(0, min(1.25 * fmax, s.freq_axis[-1]) if fmax > 0 else s.freq_axis[-1])
-        style_axes(axr, "Draw an ROI", "Frequency (MHz)", "Depth (mm)")
+        style_axes(axr, RIGHT_TITLE, "Frequency (MHz)", "Depth (mm)")
         axr.grid(False)
         axr.tick_params(labelleft=True)
         style_legend(axr.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=2, fontsize=8))
@@ -302,6 +423,86 @@ class RoiBandPage(QWidget):
             self._on_box(None, None)
         self._canvas.draw_idle()
 
+    # ------------------------------------------------------------------ vessels (Nakagami confidence)
+    def _on_nakagami(self, result) -> None:
+        self._naka = result
+        self._update_vessels()
+
+    def _on_nakagami_failed(self, error) -> None:
+        self._naka_error = str(error)
+        self._update_vessels()
+
+    def _structure_masks(self):
+        """(vessel, bright) masks: poor Nakagami fit and darker / brighter than the tissue at the same
+        depth, inside the first pass's evaluated depths (leaves out the transducer ring-down)."""
+        if self._naka is None:
+            return None, None
+        thr = self._vthr()
+        vessel = self._naka.vessel_mask(thr, darker_only=True)
+        bright = self._naka.bright_mask(thr)
+        if self._intersect is not None:
+            z = self._intersect.sample.block_z
+            inside = (self._axial >= np.nanmin(z)) & (self._axial <= np.nanmax(z))
+            vessel, bright = vessel & inside, bright & inside
+        return vessel, bright
+
+    def _vessel_mask(self):
+        return self._structure_masks()[0]
+
+    def _draw_vessels(self) -> None:
+        """Vessel / bright-reflector outlines on the B-mode (if shown and computed) and the legend."""
+        ax = getattr(self, "_ax_b", None)
+        if ax is None:
+            return
+        for art in self._vessel_artists:
+            try:
+                art.remove()
+            except Exception:
+                pass
+        self._vessel_artists = []
+        vessel, bright = self._structure_masks()
+        # short legend labels (the B-mode legend must fit under the plot); the criterion - Nakagami fit
+        # deviation (KS test) above the threshold - is in the instructions and the threshold setting
+        layers = ((self._show_vessels, vessel, VESSEL, "Possible vessel"),
+                  (self._show_bright, bright, BRIGHT, "Possible bright reflector"))
+        handles, labels = ax.get_legend_handles_labels()
+        handles = [h for h, l in zip(handles, labels) if not l.startswith("Possible ")]
+        for box, mask, colour, label in layers:
+            if not box.isChecked():
+                continue
+            if mask is not None and mask.any():
+                self._vessel_artists.append(
+                    ax.contour(self._lateral, self._axial, mask.astype(float), [0.5], colors=[colour], linewidths=1.3))
+            proxy, = ax.plot([], [], color=colour, linewidth=1.3, label=label)
+            self._vessel_artists.append(proxy)
+            handles.append(proxy)
+        style_legend(ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=2, fontsize=8))
+
+    def _update_vessels(self) -> None:
+        if self._intersect is None:
+            return
+        self._draw_vessels()
+        if self._roi is not None and self._roi.band is not None:
+            self._on_box(None, None)          # refresh the ROI box (vessel share)
+        else:
+            self._canvas.draw_idle()
+
+    def _vessel_line(self, roi) -> str:
+        """ROI box lines: share of the ROI that is possible vessel / possible bright reflector."""
+        if self._naka_error:
+            return f"<br><span style='color:{MUTED}'>Vessel check not available: {self._naka_error}</span>"
+        vessel, bright = self._structure_masks()
+        if vessel is None:
+            return f"<br><span style='color:{MUTED}'>Vessel / bright-reflector check: computing...</span>"
+        (r1, r2), (l1, l2) = roi.rows, roi.lines
+        out = ""
+        for mask, name in ((vessel, "Possible vessel"), (bright, "Possible bright reflector")):
+            part = mask[r1:r2 + 1, l1:l2 + 1]
+            share = float(part.mean()) if part.size else 0.0
+            colour = NOTE_YELLOW if share > 0 else "white"
+            out += f"<br><span style='color:{colour}'>{name}: {share:.0%} of the ROI</span>"
+        return out   # criteria (Nakagami fit deviation threshold, darker / brighter) are in the legend / instructions
+
     # ------------------------------------------------------------------ ROI
     def _on_box(self, press, release) -> None:
         if self._intersect is None:
@@ -321,7 +522,7 @@ class RoiBandPage(QWidget):
         if b is None:
             for h in (self._row_lo, self._row_hi, self._band_box, self._bad_rows):
                 h.set_data([], [])
-            axr.set_title(f"No First-Pass Blocks Inside the ROI\n{roi.band_error}", color=UNUSABLE, fontsize=10)
+            axr.set_title(f"{RIGHT_TITLE}\nROI: no first-pass blocks inside", color=UNUSABLE, fontsize=10)
             self._roi_box.setText(f"<span style='color:{UNUSABLE}'>No first-pass blocks inside the ROI - make it "
                                   "larger.</span>")
             self._accept_button.setEnabled(False)
@@ -343,7 +544,8 @@ class RoiBandPage(QWidget):
                  else "No shared band across the usable rows")
         line3 = (f"All {b.depths.size} depth rows usable" if ok
                  else f"{int(bad.sum())} of {b.depths.size} depth rows NOT usable")
-        axr.set_title(f"{line1}\n{line3}", color=TEXT if ok else UNUSABLE, fontsize=10)
+        axr.set_title(f"{RIGHT_TITLE}\n{line1}; {line3[0].lower() + line3[1:]}", color=TEXT if ok else UNUSABLE,
+                      fontsize=10)
         (r1, r2), (l1, l2) = roi.rows, roi.lines
         colour = "white" if ok else UNUSABLE
         self._roi_box.setText(
@@ -352,7 +554,7 @@ class RoiBandPage(QWidget):
             f"f<sub>low</sub> set at {b.f_low_limit_depth:.1f} mm, f<sub>high</sub> at {b.f_high_limit_depth:.1f} mm<br>"
             f"Min signal power above band level: sample {np.nanmin(b.signal_power_s1):.1f} dB, reference "
             f"{np.nanmin(b.signal_power_l1):.1f} dB (need {self._intersect.sample.min_signal_power_db:g})<br>"
-            f"<span style='color:{colour}'>{line3}</span>")
+            f"<span style='color:{colour}'>{line3}</span>" + self._vessel_line(roi))
         self._accept_button.setEnabled(True)
         self._canvas.draw_idle()
 
@@ -379,6 +581,8 @@ class RoiBandPage(QWidget):
                 "First Pass Window mm": (s.window_length_mm, s.block_width_mm),
                 "First Pass Block Lines": s.block_lines,
                 "Correlation Settings": dict(self.correlation_settings or {}),
+                "Usable Level dB Above Noise": self._power_total_db(),
+                "Nakagami Fit Deviation Threshold": self._vthr(),
             })
         except Exception as e:
             self._error.setText(f"Could not save the ROI: {e}")
@@ -397,6 +601,7 @@ class RoiBandPage(QWidget):
 
     def shutdown(self) -> None:
         stop_worker(self._worker)
+        stop_worker(self._naka_worker)
 
     def show_error(self, message: str) -> None:
         self._error.setText(message)

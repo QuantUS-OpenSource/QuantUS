@@ -167,6 +167,8 @@ class OptionCardGrid(QWidget):
             card.clicked.connect(self.select)
             self._cards[opt["key"]] = card
             grid.addWidget(card, i // 2, i % 2)
+        grid.setColumnStretch(0, 1)   # equal columns, whatever the description lengths
+        grid.setColumnStretch(1, 1)
 
     def select(self, key: Optional[str]) -> None:
         if key is not None and (key not in self._cards or not self._cards[key].is_available()):

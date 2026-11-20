@@ -189,14 +189,15 @@ class CustomParamsWidget(QWidget, BaseViewMixin):
         self._param_widgets['lat_win_size'] = self._lat_win_size
         layout.addRow("Lateral Window Size:", self._lat_win_size)
         
-        # Window threshold
+        # Window inclusion coverage (config.window_thresh)
         self._window_thresh = QDoubleSpinBox()
         self._window_thresh.setRange(0, 99)
         self._window_thresh.setValue(95)
         self._window_thresh.setSuffix(" %")
         self._window_thresh.setDecimals(2)
         self._param_widgets['window_thresh'] = self._window_thresh
-        layout.addRow("Window Threshold:", self._window_thresh)
+        self._window_thresh.setToolTip("A window is analysed only if more than this share of it lies inside the ROI.")
+        layout.addRow("Window Inclusion Coverage:", self._window_thresh)
         
         # Axial overlap
         self._axial_overlap = QDoubleSpinBox()
@@ -365,4 +366,4 @@ class CustomParamsWidget(QWidget, BaseViewMixin):
             raise ValueError("Overlap values must be between 0 and 1")
             
         if not (0 <= params['window_thresh'] <= 1):
-            raise ValueError("Window threshold must be between 0 and 1") 
+            raise ValueError("Window inclusion coverage must be between 0 and 100 %") 

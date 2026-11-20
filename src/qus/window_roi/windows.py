@@ -100,8 +100,11 @@ def first_pass_band_for_roi(image_data, roi, correlation_kwargs: dict, report=No
     ref = calc_first_pass_from_image(image_data, "phantom", **kw)
     smp = calc_first_pass_from_image(image_data, "scan", block_lines=ref.block_lines, **kw)
     check_sector_roi(intersect_first_pass(smp, ref), roi)
+    from engines.qus.quantus.seg_loading.correlation_length.roi import valid_band
     b = roi.band
-    if b is None or not (np.isfinite(b.f_low_roi) and np.isfinite(b.f_high_roi)):
+    if b is None or not valid_band((b.f_low_roi, b.f_high_roi)):
         raise ValueError("No first-pass band shared by sample and reference inside this ROI "
-                         f"({roi.band_error or 'no usable shared band'}).")
+                         f"({roi.band_error or 'no usable shared band'}). Go back and redraw the ROI where "
+                         "the first pass shows signal in both (the magenta region), e.g. below the "
+                         "transducer ring-down near the top of the image.")
     return float(b.f_low_roi), float(b.f_high_roi)

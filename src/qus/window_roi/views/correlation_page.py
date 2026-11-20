@@ -87,7 +87,7 @@ class CorrelationPage(QWidget):
         self._fraction = spin(5, 100, 5, 0, " % of width")
         central_tip = ("Measurement windows are placed every half window across the central part of the image "
                        "(e.g. 50% = the middle half of the A-lines), away from the image edges / sector walls, "
-                       "and averaged with the frames. Unchecked: only the centre A-line, as the MATLAB.")
+                       "and averaged with the frames. Unchecked: only the centre A-line.")
         self._central.setToolTip(central_tip)
         self._fraction.setToolTip(central_tip)
         self._ax_factor = spin(0.5, 50, 0.5, 1, " x")
